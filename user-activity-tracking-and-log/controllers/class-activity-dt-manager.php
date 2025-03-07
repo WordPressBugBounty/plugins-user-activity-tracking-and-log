@@ -307,6 +307,8 @@ class Activity_DT_Manager {
 		endif;
 		// Main query to actually get the data.
 
+		$where = str_replace( '`post_type`', 'uat_log.post_type', $where );
+
 		$cache_key = 'aut_et_dt_cache_' . md5( $order . $where );
 		$data      = wp_cache_get( $cache_key, 'user-activity-tracking-and-log' );
 		if ( ! $data ) :
@@ -463,6 +465,8 @@ class Activity_DT_Manager {
 		$limit = self::limit( $request, $columns );
 		$order = self::order( $request, $columns );
 		$where = self::filter( $request, $columns, $bindings );
+		$where = str_replace( '`post_type`', 'uat_log.post_type', $where );
+
 		// Main query to actually get the data.
 
 		$cache_key = 'aut_et_dt_cache_' . md5( $limit . $order . $where );

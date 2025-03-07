@@ -38,8 +38,8 @@ class Moove_Activity_Database_Model {
 				$uat_db_init = $wpdb->query(
 					"CREATE TABLE IF NOT EXISTS {$wpdb->prefix}moove_activity_log(
 	        id integer not null auto_increment,
-	        post_id integer not null,
-	        user_id integer DEFAULT NULL,
+	        post_id bigint not null,
+	        user_id bigint DEFAULT NULL,
 	        status TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
 	        user_ip TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
 	        city TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
@@ -321,7 +321,7 @@ class Moove_Activity_Database_Model {
 	 * @param array $data Data to insert.
 	 */
 	public static function insert( $data ) {
-		global $wpdb;
+		global $wpdb;		
 		$log_id 	= $wpdb->insert( self::uat_table(), $data ); // phpcs:ignore
 		$response = array(
 			'id'   => $wpdb->insert_id

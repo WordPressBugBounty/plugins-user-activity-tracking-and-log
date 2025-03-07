@@ -4,7 +4,7 @@
  *  Plugin Name: User Activity Tracking and Log
  *  Plugin URI: http://www.mooveagency.com
  *  Description: This plugin gives you the ability to track user activity on your website.
- *  Version: 4.1.8
+ *  Version: 4.1.9
  *  Author: Moove Agency
  *  Author URI: http://www.mooveagency.com
  *  License: GPLv2
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Exit if accessed directly.
 }
 
-define( 'MOOVE_UAT_VERSION', '4.1.8' );
+define( 'MOOVE_UAT_VERSION', '4.1.9' );
 
 if ( ! defined( 'MOOVE_SHOP_URL' ) ) :
 	define( 'MOOVE_SHOP_URL', 'https://shop.mooveagency.com' );
