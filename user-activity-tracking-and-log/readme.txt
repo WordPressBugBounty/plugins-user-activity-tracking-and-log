@@ -1,10 +1,10 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.1.9
+Stable tag: 4.2.0
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
-Tested up to: 6.7
+Tested up to: 6.8
 Requires PHP: 5.6
 License: GPLv3
 
@@ -143,6 +143,9 @@ We have a [dedicated support forum](https://support.mooveagency.com/forum/user-a
 13. User Activity Tracking and Log - Advanced Settings [Premium]
 
 == Changelog ==
+= 4.2.0: 5 September 2025 =
+* GeoIP tool replaced
+
 = 4.1.9: 7 Mar 2025 = 
 * Admin improvements
 

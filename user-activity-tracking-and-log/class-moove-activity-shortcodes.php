@@ -76,25 +76,41 @@ class Moove_Activity_Shortcodes {
 	 */
 	public function get_location_details( $ip = false ) {
 		$response = false;
+
 		if ( $ip ) :
 			$transient_key = 'uat_locdata_' . md5( $ip );
 			$details       = get_transient( $transient_key );
 			if ( ! $details ) :
 				try {
-					$url_link = "http://www.geoplugin.net/xml.gp?ip={$ip}";
-					$response = simplexml_load_file( $url_link );
+					$response = wp_remote_get( 
+						'https://ipapi.co/'.$ip.'/json',
+						array(
+							'timeout'     => 30,
+							'httpversion' => '1.1',
+						)
+					);
+
+					try {
+				    $data = json_decode( $response['body'], true );
+				  } catch ( Exception $ex ) {
+				    $data = null;
+				  }
+
+				  $loc = maybe_unserialize( $data );
+
 					$details  = array();
-					if ( $response ) :
+					if ( $loc && is_array( $loc ) && isset( $loc['ip'] ) ) :
 						$details = array(
-							'ip'     => isset( $response->geoplugin_request ) ? strval( $response->geoplugin_request ) : $ip,
-							'city'   => isset( $response->geoplugin_city ) ? strval( $response->geoplugin_city ) : '',
-							'region' => isset( $response->geoplugin_region ) ? strval( $response->geoplugin_region ) : ''
+							'ip'     => isset( $loc['ip'] ) ? strval( $loc['ip'] ) : $ip,
+							'city'   => isset( $loc['city'] ) ? strval( $loc['city'] ) : '',
+							'region' => isset( $loc['region'] ) ? strval( $loc['region'] ) : ''
 						);
 					endif;
 
 					if ( $details && is_array( $details ) && ! empty( $details ) ) :
-						$details = wp_json_encode( $details );
-						set_transient( $transient_key, $details, 30 * DAY_IN_SECONDS );
+						$_details = wp_json_encode( $details );
+						set_transient( $transient_key, $_details, 30 * DAY_IN_SECONDS );
+						$details = json_decode( json_encode( $details ) );
 					else :
 						$details = false;
 					endif;
