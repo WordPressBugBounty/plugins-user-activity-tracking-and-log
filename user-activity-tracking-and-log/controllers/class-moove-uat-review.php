@@ -239,7 +239,7 @@ class Moove_UAT_Review {
                 console.error(err);
               }
             });
-            $(document).on('click','.uat-ccr-review-notice .uat-ccrn-dismiss .uat-ccr-review-notice .notice-dismiss', function(e){
+            $(document).on('click','.uat-ccr-review-notice .uat-ccrn-dismiss, .uat-ccr-review-notice .notice-dismiss', function(e){
               e.preventDefault();
               $(this).closest('.uat-ccr-notice').slideUp();
               var ajax_url =$(this).closest('.uat-ccr-notice').attr('data-adminajax');
