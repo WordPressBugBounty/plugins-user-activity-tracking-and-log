@@ -451,6 +451,10 @@
 			});
 
 			update_table_cols( table );
+
+			if ( typeof moove_backend_activity_scripts.vd_status !== 'undefined' && moove_backend_activity_scripts.vd_status === '0' ) {
+				table.column(6).visible(false);
+			}
     }
 
     function uat_cpt_get_log_table( log_id, element, action ) {
@@ -620,6 +624,10 @@
 
 						update_table_cols( table );
 						table.column(1).visible(false);
+
+						if ( typeof moove_backend_activity_scripts.vd_status !== 'undefined' && moove_backend_activity_scripts.vd_status === '0' ) {
+							table.column(6).visible(false);
+						}
 
 						table.on( 'column-visibility.dt', function ( e, settings, column, state ) {
 					    uat_cpt_colvis_update( e, settings, column, state );

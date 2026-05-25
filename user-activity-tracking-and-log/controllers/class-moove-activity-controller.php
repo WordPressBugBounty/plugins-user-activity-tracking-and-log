@@ -114,7 +114,7 @@ class Moove_Activity_Controller {
 						'db'        => 'post_type',
 						'dt'        => 2,
 						'formatter' => function( $d, $row ) {
-							$pt = get_post_type_object( $d );
+							$archive_labels = array( 'archive' => 'Archive', 'post_archive' => 'Blog Archive', 'front_page' => 'Front Page' ); if ( isset( $archive_labels[ $d ] ) ) { return $archive_labels[ $d ]; } $pt = get_post_type_object( $d );
 							$post_type = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : 'N/A';
 							return $post_type;
 						}
@@ -198,7 +198,7 @@ class Moove_Activity_Controller {
 						'db'        => 'permalink',
 						'dt'        => 11,
 						'formatter' => function( $d, $row ) {
-							$permalink = get_permalink( $row['post_id'] );
+							$permalink = intval( $row['post_id'] ) > 0 ? get_permalink( $row['post_id'] ) : ( isset( $row['request_url'] ) && $row['request_url'] ? $row['request_url'] : false );
 							return $permalink ? esc_url( $permalink ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 						}
 					),
@@ -303,7 +303,7 @@ class Moove_Activity_Controller {
 					'db'        => 'post_type',
 					'dt'        => 2,
 					'formatter' => function( $d, $row ) {
-						$pt = get_post_type_object( $d );
+						$archive_labels = array( 'archive' => 'Archive', 'post_archive' => 'Blog Archive', 'front_page' => 'Front Page' ); if ( isset( $archive_labels[ $d ] ) ) { return $archive_labels[ $d ]; } $pt = get_post_type_object( $d );
 						$post_type = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : 'N/A';
 						return $post_type;
 					}
@@ -386,7 +386,7 @@ class Moove_Activity_Controller {
 					'db'        => 'permalink',
 					'dt'        => 11,
 					'formatter' => function( $d, $row ) {
-						$permalink = get_permalink( $row['post_id'] );
+						$permalink = intval( $row['post_id'] ) > 0 ? get_permalink( $row['post_id'] ) : ( isset( $row['request_url'] ) && $row['request_url'] ? $row['request_url'] : false );
 						return $permalink ? esc_url( $permalink ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 					}
 				),
@@ -440,7 +440,7 @@ class Moove_Activity_Controller {
 					'db'        => 'post_title',
 					'dt'        => 1,
 					'formatter' => function( $d, $row ) {
-						$permalink = get_permalink( $row['post_id'] );
+						$permalink = intval( $row['post_id'] ) > 0 ? get_permalink( $row['post_id'] ) : ( isset( $row['request_url'] ) && $row['request_url'] ? $row['request_url'] : false );
 						$title       = get_the_title( $row['post_id'] );
 						return $title;
 					}
@@ -449,7 +449,7 @@ class Moove_Activity_Controller {
 					'db'        => 'post_type',
 					'dt'        => 2,
 					'formatter' => function( $d, $row ) {
-						$pt = get_post_type_object( $d );
+						$archive_labels = array( 'archive' => 'Archive', 'post_archive' => 'Blog Archive', 'front_page' => 'Front Page' ); if ( isset( $archive_labels[ $d ] ) ) { return $archive_labels[ $d ]; } $pt = get_post_type_object( $d );
 						$post_type = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : 'N/A';
 						return $post_type;
 					}
@@ -532,7 +532,7 @@ class Moove_Activity_Controller {
 					'db'        => 'permalink',
 					'dt'        => 11,
 					'formatter' => function( $d, $row ) {
-						$permalink = get_permalink( $row['post_id'] );
+						$permalink = intval( $row['post_id'] ) > 0 ? get_permalink( $row['post_id'] ) : ( isset( $row['request_url'] ) && $row['request_url'] ? $row['request_url'] : false );
 						return $permalink ? esc_url( $permalink ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 					},
 				),
@@ -899,7 +899,11 @@ class Moove_Activity_Controller {
 			endif;
 			wp_reset_postdata();
 		else :
+			$log_id = apply_filters( 'uat_before_tracking_data_save_log_id', false );
 			do_action('uat_before_tracking_data_save');
+			if ( ! $log_id ) :
+				$log_id = apply_filters( 'uat_archive_log_id', false );
+			endif;
 		endif;
 		echo wp_kses( $log_id, array() );
 		die();
@@ -909,11 +913,13 @@ class Moove_Activity_Controller {
 	 * Tracking the user unload event.
 	 */
 	public static function moove_activity_track_unload() {
+		ignore_user_abort( true );
 		$uat_db_controller = new Moove_Activity_Database_Model();
 		$log_id        	= isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : false; // phpcs:ignore
 		if ( $log_id ) :
-			echo intval( $uat_db_controller->update_log_unload( $log_id ) );
+			$uat_db_controller->update_log_unload( $log_id );
 		endif;
+		wp_die();
 	}
 
 	/**

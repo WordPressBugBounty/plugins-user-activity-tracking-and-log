@@ -174,6 +174,7 @@ class Activity_DT_Manager {
 	 *  @return string SQL where clause.
 	 */
 	public static function filter( $request, $columns, &$bindings ) {
+		global $wpdb;
 		$global_search = array();
 		$column_search = array();
 		$dt_columns    = self::pluck( $columns, 'dt' );
@@ -190,7 +191,7 @@ class Activity_DT_Manager {
 				if ( 'true' === $request_column['searchable'] ) {
 					if ( ! empty( $column['db'] ) && 'visit_date' !== $column['db'] ) {
 						$binding         = sanitize_text_field( wp_unslash( $str ) );
-						$global_search[] = '`' . $column['db'] . '` LIKE ' . "'%" . $str . "%'";
+						$global_search[] = '`' . $column['db'] . '` LIKE ' . "'%" . $wpdb->_real_escape( $binding ) . "%'";
 					}
 				}
 			}
@@ -209,7 +210,7 @@ class Activity_DT_Manager {
 					'' !== $str ) {
 					if ( ! empty( $column['db'] ) && 'visit_date' !== $column['db'] ) {
 						$binding         = sanitize_text_field( wp_unslash( $str ) );
-						$column_search[] = '`' . $column['db'] . '` LIKE ' . "'%" . $str . "'%";
+						$column_search[] = '`' . $column['db'] . '` LIKE ' . "'%" . $wpdb->_real_escape( $binding ) . "%'";
 					}
 				}
 			}
@@ -217,28 +218,31 @@ class Activity_DT_Manager {
 
 		if ( isset( $request['top_filters'] ) && ! empty( $request['top_filters'] ) ) :
 			foreach ( $request['top_filters'] as $filter_name => $filter_value ) :
+				$filter_value = sanitize_text_field( wp_unslash( $filter_value ) );
 				switch ( $filter_name ) :
 					case 'dt-date-filter':
-						$column_search[] = 'CONCAT(YEAR(`visit_date`), DATE_FORMAT( `visit_date` ,"%m" ) ) = "' . $filter_value . '"';
+						$column_search[] = $wpdb->prepare( 'CONCAT(YEAR(`visit_date`), DATE_FORMAT( `visit_date` ,"%%m" ) ) = %s', $filter_value );
 						break;
 					case 'dt-post_type-filter':
-						$column_search[] = '`post_type` = "' . $filter_value . '"';
+						$column_search[] = $wpdb->prepare( '`post_type` = %s', $filter_value );
 						$has_post_type_f = true;
 						break;
 					case 'dt-user-filter':
-						$column_search[] = '`user_id` = "' . $filter_value . '"';
+						$column_search[] = $wpdb->prepare( '`user_id` = %d', $filter_value );
 						break;
 					case 'dt-user_role-filter':
-						$column_search[] = '`user_id` IN (' . $filter_value . ')';
+						$user_ids = array_map( 'intval', explode( ',', $filter_value ) );
+						$placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
+						$column_search[] = $wpdb->prepare( "`user_id` IN ($placeholders)", ...$user_ids );
 						break;
 					case 'dt-cpt_post_id':
-						$column_search[] = '`post_id` = "' . $filter_value . '"';
+						$column_search[] = $wpdb->prepare( '`post_id` = %d', $filter_value );
 						break;
 					case 'dt-archive_filter':
 						$column_search[] = '`post_id` < 0';
 						break;
 					case 'dt-ip-address':
-						$column_search[] = '`user_ip` = "' . $filter_value . '"';
+						$column_search[] = $wpdb->prepare( '`user_ip` = %s', $filter_value );
 						break;
 					default:
 						// code...

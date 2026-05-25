@@ -1,11 +1,11 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.2.1
+Stable tag: 4.2.2
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
-Tested up to: 6.9
-Requires PHP: 5.6
+Tested up to: 7.0
+Requires PHP: 7.4
 License: GPLv3
 
 Track time and monitor user activity & history on your website, LMS online learning system, membership or WooCommerce site.
@@ -143,6 +143,11 @@ We have a [dedicated support forum](https://support.mooveagency.com/forum/user-a
 13. User Activity Tracking and Log - Advanced Settings [Premium]
 
 == Changelog ==
+= 4.2.2: 25 May 2026 =
+* Minor fixes
+* PHP 8 compatibility issues fixed
+* Admin improvements
+
 = 4.2.1: 30 October 2025 =
 * Admin improvements
 

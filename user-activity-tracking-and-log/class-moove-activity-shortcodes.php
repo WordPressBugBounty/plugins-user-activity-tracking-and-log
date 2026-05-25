@@ -64,7 +64,7 @@ class Moove_Activity_Shortcodes {
 			$ip = $remote;
 		}
 
-		$ip = ( strpos( $ip, ',') > 0 ) ? trim( explode( ',', $ip )[0] ) : $ip;
+		$ip = is_string( $ip ) && strpos( $ip, ',' ) > 0 ? trim( explode( ',', $ip )[0] ) : (string) $ip;
 
 		return $filter ? apply_filters( 'moove_activity_tracking_ip_filter', $ip ) : $ip;
 	}

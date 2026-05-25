@@ -127,12 +127,14 @@ class Moove_Activity_Database_Model {
 	 */
 	public static function get_all_logs( $post_types ) {
 		global $wpdb;
-		$post_types = is_array( $post_types ) ? '' . implode( "','", $post_types ) . '' : '';
-		$cache_key  = md5( $post_types );
+		$post_types = is_array( $post_types ) ? array_map( 'sanitize_key', $post_types ) : array();
+		$cache_key  = md5( implode( ',', $post_types ) );
 		$response   = wp_cache_get( 'uat_get_all_logs_' . $cache_key, 'user-activity-tracking-and-log' );
 		if ( ! $response ) :
+			$placeholders = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
 
-			$query = "SELECT 
+			$query = $wpdb->prepare(
+				"SELECT 
 				`post_id`, 
 				`visit_date` as `time`,
 				uat_log.display_name, 
@@ -158,9 +160,11 @@ class Moove_Activity_Database_Model {
 					ON uat_log.post_id = posts_tbl.id
 				LEFT JOIN {$wpdb->prefix}users users_tbl	
 					ON uat_log.user_id = users_tbl.id
-			WHERE uat_log.post_type IN ('{$post_types}')
+			WHERE uat_log.post_type IN ($placeholders)
 			ORDER BY `visit_date` DESC 
-			LIMIT 50000";
+			LIMIT 50000",
+				...$post_types
+			);
 
 			$response = $wpdb->get_results(
 				$query, // phpcs:ignore
@@ -178,11 +182,11 @@ class Moove_Activity_Database_Model {
 	 */
 	public static function get_post_type_logs( $post_type = false ) {
 		global $wpdb;
-		$post_type = is_array( $post_type ) ? '' . implode( "','", $post_type ) . '' : $post_type;
+		$post_type = is_array( $post_type ) ? implode( ',', array_map( 'sanitize_key', $post_type ) ) : sanitize_key( $post_type );
 		$cache_key = md5( $post_type );
 		$response  = wp_cache_get( 'uat_get_all_logs_' . $cache_key, 'user-activity-tracking-and-log' );
 		if ( ! $response ) :
-			$query = "SELECT DISTINCT `post_id` FROM {$wpdb->prefix}moove_activity_log uat_log WHERE  `post_type` = '{$post_type}'";
+			$query = $wpdb->prepare( "SELECT DISTINCT `post_id` FROM {$wpdb->prefix}moove_activity_log uat_log WHERE `post_type` = %s", $post_type );
 
 			$response = $wpdb->get_results(
 				$query, // phpcs:ignore
@@ -201,27 +205,39 @@ class Moove_Activity_Database_Model {
 	public static function get_search_results( $where = '' ) {
 		global $wpdb;
 		$_where = '';
+		$allowed_columns = array( 'post_id', 'user_id', 'post_type', 'user_ip', 'visit_date', 'display_name', 'status', 'event', 'type', 'campaign_id', 'request_url' );
 		if ( is_array( $where ) && ! empty( $where ) ) :
 			$relation = '';
 			if ( isset( $where['relation'] ) ) :
-				$relation = $where['relation'];
+				$relation = 'OR' === strtoupper( $where['relation'] ) ? 'OR' : 'AND';
 			endif;
-			$count = 0;
+			$conditions = array();
+			$values = array();
 			foreach ( $where as $key => $value ) :
-				$count++;
 				if ( 'relation' !== $key ) :
-					$_where .= 1 === $count ? '' : ' ' . $relation . ' ';
-					$_key    = $value['key'];
-					$_val    = $value['value'];
+					$_key = $value['key'];
+					$_val = $value['value'];
+					if ( ! in_array( $_key, $allowed_columns, true ) ) :
+						continue;
+					endif;
 					if ( isset( $value['operator'] ) && 'IN' === $value['operator'] ) :
-						$_where .= " `$_key` " . $value['operator'] . " ( $_val ) ";
+						$in_values = array_map( 'intval', explode( ',', $_val ) );
+						$placeholders = implode( ',', array_fill( 0, count( $in_values ), '%d' ) );
+						$conditions[] = "`$_key` IN ( $placeholders )";
+						$values = array_merge( $values, $in_values );
 					else :
-						$_where .= " `$_key` = '$_val' ";
+						$conditions[] = "`$_key` = %s";
+						$values[] = $_val;
 					endif;
 				endif;
 			endforeach;
 
-			return $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE $_where AND %s = %s", '1', '1' ) ); // phpcs:ignore
+			if ( empty( $conditions ) ) :
+				return $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}moove_activity_log" );
+			endif;
+
+			$_where = implode( ' ' . $relation . ' ', $conditions );
+			return $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE $_where", ...$values ) ); // phpcs:ignore
 		else :
 			return $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}moove_activity_log" ); // db call ok; no-cache ok.
 		endif;
@@ -236,6 +252,10 @@ class Moove_Activity_Database_Model {
 	 */
 	public static function get_log( $key, $value, $limit = false ) {
 		global $wpdb;
+		$allowed_columns = array( 'post_id', 'user_id', 'post_type', 'user_ip', 'visit_date', 'display_name', 'status', 'event', 'type', 'campaign_id', 'request_url', 'id' );
+		if ( ! in_array( $key, $allowed_columns, true ) ) :
+			return array();
+		endif;
 		$where       = '';
 		$cache_key   = 'uat_' . $key . $value . $limit;
 		$cache_value = wp_cache_get( $cache_key, 'user-activity-tracking-and-log' );
@@ -348,21 +368,27 @@ class Moove_Activity_Database_Model {
 	public static function update_log_unload( $log_id ) {
 		try {
 			global $wpdb;
+			$time_spent      = 0;
 			$timestamp       = strtotime( 'now' );
-			$res             = '';
-			$start_timestamp = $wpdb->get_results( $wpdb->prepare( "SELECT `visit_date` FROM {$wpdb->prefix}moove_activity_log WHERE `id` = %s LIMIT 1", $log_id ) ); // phpcs:ignore
-			$start_timestamp = isset( $start_timestamp[0] ) && isset( $start_timestamp[0]->visit_date ) ? $start_timestamp[0]->visit_date : '';
+			$start_timestamp = $wpdb->get_var( $wpdb->prepare( "SELECT `visit_date` FROM {$wpdb->prefix}moove_activity_log WHERE `id` = %d LIMIT 1", $log_id ) ); // phpcs:ignore
 
 			if ( $start_timestamp ) :
 				$start_timestamp = strtotime( $start_timestamp );
 				$time_spent      = $timestamp - $start_timestamp;
-				$res = $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->prefix}moove_activity_log SET `time_spent` = %s WHERE `id` = %s", $time_spent, $log_id ) ); // phpcs:ignore
+				if ( $time_spent > 0 ) :
+					$wpdb->update(
+						"{$wpdb->prefix}moove_activity_log",
+						array( 'time_spent' => $time_spent ),
+						array( 'id' => $log_id ),
+						array( '%d' ),
+						array( '%d' )
+					); // phpcs:ignore
+				endif;
 			endif;
 			return $time_spent;
 		} catch ( Exception $e ) {
 			return 0;
 		}
-		return 0;
 	}
 
 
