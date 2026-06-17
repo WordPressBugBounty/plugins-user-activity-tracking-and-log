@@ -395,6 +395,165 @@ class Activity_DT_Manager {
 	}
 
 	/**
+	 * Paginated/chunked export to avoid memory exhaustion on large datasets.
+	 *
+	 * Uses **keyset pagination** (`WHERE id > $last_id`) instead of
+	 * LIMIT/OFFSET so chunk N has the same cost as chunk 1 on tables with
+	 * millions of rows. Bulk-primes post and user caches before the row
+	 * formatters run, so per-row `get_permalink()` / `get_userdata()` calls
+	 * hit the in-memory cache instead of the database.
+	 *
+	 * @param  array  $request Data sent to server by DataTables.
+	 * @param  array  $columns Column information array.
+	 * @param  string $type    Export type: 'all', 'filtered', 'cpt'.
+	 * @param  int    $last_id Cursor — only rows with `id` greater than this
+	 *                         are returned. Pass 0 for the first chunk.
+	 * @param  int    $limit   Maximum number of rows to return in this chunk.
+	 * @return array           Chunk payload with `data`, `last_id`,
+	 *                         `recordsTotal` (first chunk), `headers`
+	 *                         (first chunk), `count`, `limit` and `has_more`.
+	 */
+	public static function export_paginated( $request, $columns, $type = 'all', $last_id = 0, $limit = 5000 ) {
+		global $wpdb;
+
+		$bindings = array();
+		$last_id  = max( 0, intval( $last_id ) );
+		$limit    = max( 1, min( 20000, intval( $limit ) ) );
+		$where    = 'all' === $type ? '' : self::filter( $request, $columns, $bindings );
+
+		if ( 'cpt' === $type && isset( $request['log_id'] ) && intval( $request['log_id'] ) ) :
+			$where = 'WHERE `post_id` = ' . intval( $request['log_id'] );
+		endif;
+
+		/**
+		 * Where clause filters — same column rewrites used by export().
+		 */
+		$where = str_replace( '`post_type`', 'uat_log.post_type', $where );
+		$where = str_replace( '`display_name`', 'uat_log.display_name', $where );
+		$where = str_replace( '`user_email`', 'users_tbl.user_email', $where );
+		$where = str_replace( '`user_login`', 'users_tbl.user_login', $where );
+		$where = str_replace( '`permalink`', 'posts_tbl.guid', $where );
+
+		// Keyset cursor — append (or build) the WHERE so MySQL can do a
+		// primary-key range scan starting at the cursor.
+		$where_for_data = $where;
+		if ( $last_id > 0 ) {
+			$keyset         = 'uat_log.id > ' . intval( $last_id );
+			$where_for_data = $where_for_data ? $where_for_data . ' AND ' . $keyset : 'WHERE ' . $keyset;
+		}
+
+		$base_from_count = "
+			FROM {$wpdb->prefix}moove_activity_log uat_log
+				LEFT JOIN {$wpdb->prefix}posts posts_tbl
+					ON uat_log.post_id = posts_tbl.id
+				LEFT JOIN {$wpdb->base_prefix}users users_tbl
+					ON uat_log.user_id = users_tbl.id
+			$where
+		";
+
+		$base_from_data = "
+			FROM {$wpdb->prefix}moove_activity_log uat_log
+				LEFT JOIN {$wpdb->prefix}posts posts_tbl
+					ON uat_log.post_id = posts_tbl.id
+				LEFT JOIN {$wpdb->base_prefix}users users_tbl
+					ON uat_log.user_id = users_tbl.id
+			$where_for_data
+		";
+
+		$sql = "
+			SELECT
+				uat_log.id,
+				`post_id`,
+				uat_log.display_name,
+				`user_ip`,
+				`status`,
+				`referer`,
+				`visit_date`,
+				`city`,
+				`user_id`,
+				posts_tbl.guid as `permalink`,
+				`event`,
+				`type`,
+				`time_spent`,
+				`extras`,
+				users_tbl.user_email,
+				users_tbl.user_login,
+				uat_log.post_type,
+				posts_tbl.post_title as `post_title`,
+				`request_url`,
+				`archive_title`,
+				`campaign_id`
+			$base_from_data
+			ORDER BY uat_log.`id` ASC
+			LIMIT " . intval( $limit );
+
+		$data = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore -- prepared values are integers above; identifiers come from filter() rewriting.
+
+		if ( ! is_array( $data ) ) {
+			$data = array();
+		}
+
+		// Bulk-prime WordPress caches once per chunk so per-row formatters
+		// (get_permalink / get_userdata / role lookups) hit memory, not the DB.
+		$post_ids = array();
+		$user_ids = array();
+		foreach ( $data as $row ) {
+			if ( ! empty( $row['post_id'] ) ) {
+				$post_ids[ (int) $row['post_id'] ] = true;
+			}
+			if ( ! empty( $row['user_id'] ) ) {
+				$user_ids[ (int) $row['user_id'] ] = true;
+			}
+		}
+		if ( $post_ids && function_exists( '_prime_post_caches' ) ) {
+			_prime_post_caches( array_keys( $post_ids ), false, false );
+		}
+		if ( $user_ids && function_exists( 'cache_users' ) ) {
+			cache_users( array_keys( $user_ids ) );
+		}
+
+		// Cursor for the next chunk = max id in this chunk.
+		$row_count    = count( $data );
+		$next_last_id = $last_id;
+		if ( $row_count > 0 ) {
+			$last_row     = end( $data );
+			$next_last_id = isset( $last_row['id'] ) ? (int) $last_row['id'] : $last_id;
+			reset( $data );
+		}
+
+		$response = array(
+			'last_id'  => $next_last_id,
+			'limit'    => $limit,
+			'count'    => $row_count,
+			'has_more' => $row_count === $limit,
+			'data'     => self::export_data_output( $columns, $data ),
+		);
+
+		// Free per-chunk memory before encoding.
+		unset( $data );
+
+		// Compute total + headers only on the first chunk.
+		if ( 0 === $last_id ) {
+			if ( 'all' === $type ) {
+				// Cheap unfiltered count — no joins.
+				$sql_count = "SELECT COUNT(*) FROM {$wpdb->prefix}moove_activity_log";
+			} else {
+				$sql_count = "SELECT COUNT(uat_log.`id`) $base_from_count";
+			}
+			$total = $wpdb->get_var( $sql_count ); // phpcs:ignore
+
+			$headers   = array( 'Date / Time', 'Post Title', 'Post Type', 'User Email', 'Username', 'Display Name', 'Visit Duration', 'User Role', 'Location', 'IP Address', 'Referrer', 'Permalink', 'Full URL' );
+			$headers_f = array_values( apply_filters( 'uat_csv_dt_header', array() ) );
+			$headers   = array( array_merge( $headers, $headers_f ) );
+
+			$response['headers']      = $headers;
+			$response['recordsTotal'] = (int) $total;
+		}
+
+		return $response;
+	}
+
+	/**
 	 * Perform the SQL queries needed for an server-side processing requested,
 	 * utilising the helper functions of this class, limit(), order() and
 	 * filter() among others. The returned array is ready to be encoded as JSON
@@ -473,11 +632,23 @@ class Activity_DT_Manager {
 
 		// Main query to actually get the data.
 
-		$cache_key = 'aut_et_dt_cache_' . md5( $limit . $order . $where );
-		$data      = wp_cache_get( $cache_key, 'user-activity-tracking-and-log' );
-		if ( ! $data ) :
-			$_post_types           = get_post_types( array( 'public' => true ) );
+		$cache_key   = 'aut_et_dt_cache_' . md5( $limit . $order . $where );
+		$count_key   = 'aut_et_dt_count_' . md5( $where );
+		$cache_group = 'user-activity-tracking-and-log';
+		$cached      = wp_cache_get( $cache_key, $cache_group );
 
+		// `$cached` may be either the legacy raw rows array or the new
+		// envelope `array( 'data' => …, 'records_filtered' => … )`. Normalise.
+		$data              = false;
+		$records_filtered  = false;
+		if ( is_array( $cached ) && isset( $cached['data'] ) && array_key_exists( 'records_filtered', $cached ) ) {
+			$data             = $cached['data'];
+			$records_filtered = $cached['records_filtered'];
+		} elseif ( is_array( $cached ) && ! empty( $cached ) && isset( $cached[0]['visit_date'] ) ) {
+			$data = $cached;
+		}
+
+		if ( false === $data ) :
 			/**
 			 * Where clause filters
 			 */
@@ -519,87 +690,143 @@ class Activity_DT_Manager {
 				$limit
 			";
 
-			$sql_count = "
-				SELECT 
-					COUNT(`visit_date`) as '0' 
-				FROM {$wpdb->prefix}moove_activity_log uat_log 
-					LEFT JOIN {$wpdb->prefix}posts posts_tbl	
-						ON uat_log.post_id = posts_tbl.id
-					LEFT JOIN {$wpdb->base_prefix}users users_tbl	
-						ON uat_log.user_id = users_tbl.id
-				$where
-			";
-
 			$data = $wpdb->get_results(
 				$sql, // phpcs:ignore
 				ARRAY_A
 			); // db call ok; no-cache ok.
 
-			wp_cache_set( $cache_key, $data, 'user-activity-tracking-and-log' );
+			if ( ! is_array( $data ) ) {
+				$data = array();
+			}
+
+			wp_cache_set( $cache_key, array( 'data' => $data, 'records_filtered' => false ), $cache_group, MINUTE_IN_SECONDS * 5 );
 		endif;
 
-		$sql_count = "
-			SELECT 
-				COUNT(`visit_date`) as '0' 
-			FROM {$wpdb->prefix}moove_activity_log uat_log 
-				LEFT JOIN {$wpdb->prefix}posts posts_tbl	
-					ON uat_log.post_id = posts_tbl.id
-				LEFT JOIN {$wpdb->base_prefix}users users_tbl	
-					ON uat_log.user_id = users_tbl.id
-			$where
-		";
+		// Filtered count — share across page navigations of the same WHERE.
+		if ( false === $records_filtered ) {
+			$records_filtered = wp_cache_get( $count_key, $cache_group );
+		}
+		if ( false === $records_filtered ) {
+			if ( '' === trim( (string) $where ) ) {
+				$records_filtered = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}moove_activity_log" ); // phpcs:ignore
+			} else {
+				$sql_count = "
+					SELECT COUNT(uat_log.`id`)
+					FROM {$wpdb->prefix}moove_activity_log uat_log
+						LEFT JOIN {$wpdb->prefix}posts posts_tbl
+							ON uat_log.post_id = posts_tbl.id
+						LEFT JOIN {$wpdb->base_prefix}users users_tbl
+							ON uat_log.user_id = users_tbl.id
+					$where
+				";
+				$records_filtered = (int) $wpdb->get_var( $sql_count ); // phpcs:ignore
+			}
+			wp_cache_set( $count_key, $records_filtered, $cache_group, MINUTE_IN_SECONDS * 5 );
+			wp_cache_set( $cache_key, array( 'data' => $data, 'records_filtered' => $records_filtered ), $cache_group, MINUTE_IN_SECONDS * 5 );
+		}
 
-		$res_filter_length = $wpdb->get_results( $sql_count, ARRAY_A ); // phpcs:ignore
-		$records_filtered  = isset( $res_filter_length[0] ) && isset( $res_filter_length[0][0] ) ? $res_filter_length[0][0] : 0;
+		// Cheap unfiltered total — `recordsTotal` should reflect the whole
+		// table, not the WHERE-filtered subset.
+		$records_total = wp_cache_get( 'aut_et_dt_total', $cache_group );
+		if ( false === $records_total ) {
+			$records_total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}moove_activity_log" ); // phpcs:ignore
+			wp_cache_set( 'aut_et_dt_total', $records_total, $cache_group, MINUTE_IN_SECONDS * 5 );
+		}
 
-		$sql_month_year = "
-			SELECT DISTINCT
-			CONCAT(YEAR(uat_log.visit_date), DATE_FORMAT( uat_log.visit_date ,'%m' ) ) as `ym`
-			FROM {$wpdb->prefix}moove_activity_log uat_log 
-			LEFT JOIN {$wpdb->prefix}posts posts_tbl	
-			ON uat_log.post_id = posts_tbl.id
-			ORDER BY `ym` DESC";
-
-		$sql_users = "
-			SELECT DISTINCT
-				`user_id`,
-				users_tbl.user_login as `username`,
-				users_tbl.display_name as `display_name`
-			FROM {$wpdb->prefix}moove_activity_log uat_log 
-				LEFT JOIN {$wpdb->prefix}posts posts_tbl	
-					ON uat_log.post_id = posts_tbl.id
-				LEFT JOIN {$wpdb->base_prefix}users users_tbl	
-					ON uat_log.user_id = users_tbl.id
-			ORDER BY users_tbl.user_login ASC
-		";
+		// Bulk-prime WordPress object caches for this page so per-row
+		// formatters (get_permalink / get_userdata / get_post_type_object)
+		// hit memory instead of issuing one query per row.
+		$post_ids = array();
+		$user_ids = array();
+		foreach ( $data as $row ) {
+			if ( ! empty( $row['post_id'] ) ) {
+				$post_ids[ (int) $row['post_id'] ] = true;
+			}
+			if ( ! empty( $row['user_id'] ) ) {
+				$user_ids[ (int) $row['user_id'] ] = true;
+			}
+		}
+		if ( $post_ids && function_exists( '_prime_post_caches' ) ) {
+			_prime_post_caches( array_keys( $post_ids ), false, false );
+		}
+		if ( $user_ids && function_exists( 'cache_users' ) ) {
+			cache_users( array_keys( $user_ids ) );
+		}
 
 		$date_filter       = array();
 		$user_filter       = array();
 		$users_role_filter = array();
 		/**
-		 * We should fill the filters only on init
+		 * We should fill the filters only on init.
+		 *
+		 * The DISTINCT scans on `wp_moove_activity_log` are expensive on
+		 * large tables — cache the result for 5 minutes so repeated table
+		 * inits within that window are free.
 		 */
 		if ( isset( $request['draw'] ) && intval( $request['draw'] ) === 1 ) {
-			$date_filter 	 = $wpdb->get_results( $sql_month_year, ARRAY_A ); // phpcs:ignore
-			$user_filter 	 = $wpdb->get_results( $sql_users, ARRAY_A ); // phpcs:ignore
+			$filters_key    = 'aut_et_dt_filters';
+			$cached_filters = wp_cache_get( $filters_key, $cache_group );
+			if ( is_array( $cached_filters ) && isset( $cached_filters['date_filter'], $cached_filters['users_filter'], $cached_filters['users_role_filter'] ) ) {
+				$date_filter       = $cached_filters['date_filter'];
+				$user_filter       = $cached_filters['users_filter'];
+				$users_role_filter = $cached_filters['users_role_filter'];
+			} else {
+				$sql_month_year = "
+					SELECT DISTINCT
+					CONCAT(YEAR(uat_log.visit_date), DATE_FORMAT( uat_log.visit_date ,'%m' ) ) as `ym`
+					FROM {$wpdb->prefix}moove_activity_log uat_log 
+					ORDER BY `ym` DESC";
 
-			if ( $user_filter && ! empty( $user_filter ) ) :
-				foreach ( $user_filter as $_user_data ) :
-					if ( intval( $_user_data['user_id'] ) ) :
-						$user_meta = wp_cache_get( 'uat_user_meta_' . $_user_data['user_id'], 'user-activity-tracking-and-log' );
-						if ( ! $user_meta ) :
+				$sql_users = "
+					SELECT DISTINCT
+						uat_log.`user_id`,
+						users_tbl.user_login as `username`,
+						users_tbl.display_name as `display_name`
+					FROM {$wpdb->prefix}moove_activity_log uat_log 
+						LEFT JOIN {$wpdb->base_prefix}users users_tbl	
+							ON uat_log.user_id = users_tbl.id
+					WHERE uat_log.user_id > 0
+					ORDER BY users_tbl.user_login ASC
+				";
+
+				$date_filter = $wpdb->get_results( $sql_month_year, ARRAY_A ); // phpcs:ignore
+				$user_filter = $wpdb->get_results( $sql_users, ARRAY_A ); // phpcs:ignore
+
+				if ( $user_filter && ! empty( $user_filter ) ) :
+					$filter_user_ids = array();
+					foreach ( $user_filter as $_user_data ) {
+						if ( intval( $_user_data['user_id'] ) ) {
+							$filter_user_ids[] = (int) $_user_data['user_id'];
+						}
+					}
+					if ( $filter_user_ids && function_exists( 'cache_users' ) ) {
+						cache_users( array_values( array_unique( $filter_user_ids ) ) );
+					}
+					foreach ( $user_filter as $_user_data ) :
+						if ( intval( $_user_data['user_id'] ) ) :
 							$user_meta = get_userdata( intval( $_user_data['user_id'] ) );
-						endif;
-						if ( $user_meta && isset( $user_meta->roles ) ) :
-							$user_roles = $user_meta->roles;
-							if ( isset( $user_roles[0] ) ) :
-								$user_role                         = $user_roles[0];
-								$users_role_filter[ $user_role ][] = $_user_data['user_id'];
+							if ( $user_meta && isset( $user_meta->roles ) ) :
+								$user_roles = $user_meta->roles;
+								if ( isset( $user_roles[0] ) ) :
+									$user_role                         = $user_roles[0];
+									$users_role_filter[ $user_role ][] = $_user_data['user_id'];
+								endif;
 							endif;
 						endif;
-					endif;
-				endforeach;
-			endif;
+					endforeach;
+				endif;
+
+				wp_cache_set(
+					$filters_key,
+					array(
+						'date_filter'       => $date_filter,
+						'users_filter'      => $user_filter,
+						'users_role_filter' => $users_role_filter,
+					),
+					$cache_group,
+					MINUTE_IN_SECONDS * 5
+				);
+			}
 		}
 
 		/*
@@ -609,7 +836,7 @@ class Activity_DT_Manager {
 			'draw'              => isset( $request['draw'] ) ?
 			intval( $request['draw'] ) :
 			0,
-			'recordsTotal'      => intval( $records_filtered ),
+			'recordsTotal'      => intval( $records_total ),
 			'recordsFiltered'   => intval( $records_filtered ),
 			'date_filter'       => $date_filter,
 			'users_filter'      => $user_filter,

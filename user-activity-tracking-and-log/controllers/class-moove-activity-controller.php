@@ -273,130 +273,156 @@ class Moove_Activity_Controller {
 				)
 			);
 		else :
+			// Lift per-request lookups out of per-row closures so they run
+			// once per page render instead of once per row. Pairs with
+			// Activity_DT_Manager::simple() which bulk-primes the post +
+			// user object caches before formatters run.
+			$screen_options = get_user_meta( get_current_user_id(), 'moove_activity_screen_options', true );
+			$selected_val   = isset( $screen_options['moove-activity-dtf'] ) ? $screen_options['moove-activity-dtf'] : 'a';
+			$na             = esc_html__( 'N/A', 'user-activity-tracking-and-log' );
+
 			$trigger_details = array();
 			$columns         = array(
 				array(
 					'db'        => 'visit_date',
 					'dt'        => 0,
-					'formatter' => function( $d, $row ) {
-						$screen_options = get_user_meta( get_current_user_id(), 'moove_activity_screen_options', true );
-						$selected_val   = isset( $screen_options['moove-activity-dtf'] ) ? $screen_options['moove-activity-dtf'] : 'a';
-						$date                   = esc_attr( moove_activity_convert_date( $selected_val, $d, $screen_options ) );
+					'formatter' => function ( $d, $row ) use ( $selected_val, $screen_options ) {
+						$date = esc_attr( moove_activity_convert_date( $selected_val, $d, $screen_options ) );
 						return str_replace( ' ', '<br />', $date );
-					}
+					},
 				),
 				array(
 					'db'        => 'post_title',
 					'dt'        => 1,
-					'formatter' => function( $d, $row ) {
-						if ( $row['post_id'] > 0 ) :
-							$permalink 		= get_permalink( $row['post_id'] );
-							$title       	= get_the_title( $row['post_id'] );
-						else: 
-							$permalink 		= isset( $row['request_url'] ) ? $row['request_url'] : '';
-							$title       	= isset( $row['archive_title'] ) ? $row['archive_title'] : 'N/A';
-						endif;
-						return '<span class="uat-dd-title"><a href="' . $permalink . '" target="_blank">' . $title . '</a></span>';
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						$pid = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+						if ( $pid > 0 ) {
+							$permalink = get_permalink( $pid );
+							$title     = ! empty( $d ) ? $d : get_the_title( $pid );
+						} else {
+							$permalink = isset( $row['request_url'] ) ? $row['request_url'] : '';
+							$title     = isset( $row['archive_title'] ) && $row['archive_title'] ? $row['archive_title'] : $na;
+						}
+						return '<span class="uat-dd-title"><a href="' . esc_url( $permalink ) . '" target="_blank">' . esc_html( $title ) . '</a></span>';
+					},
 				),
 				array(
 					'db'        => 'post_type',
 					'dt'        => 2,
-					'formatter' => function( $d, $row ) {
-						$archive_labels = array( 'archive' => 'Archive', 'post_archive' => 'Blog Archive', 'front_page' => 'Front Page' ); if ( isset( $archive_labels[ $d ] ) ) { return $archive_labels[ $d ]; } $pt = get_post_type_object( $d );
-						$post_type = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : 'N/A';
-						return $post_type;
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						static $cache          = array();
+						static $archive_labels = array(
+							'archive'      => 'Archive',
+							'post_archive' => 'Blog Archive',
+							'front_page'   => 'Front Page',
+						);
+						if ( '' === $d || null === $d ) {
+							return $na;
+						}
+						if ( isset( $archive_labels[ $d ] ) ) {
+							return $archive_labels[ $d ];
+						}
+						if ( isset( $cache[ $d ] ) ) {
+							return $cache[ $d ];
+						}
+						$pt          = get_post_type_object( $d );
+						$cache[ $d ] = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : $na;
+						return $cache[ $d ];
+					},
 				),
 				array(
 					'db'        => 'user_email',
 					'dt'        => 3,
-					'formatter' => function( $d, $row ) {
-						$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-						return $linkified_value;
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+					},
 				),
 				array(
 					'db'        => 'user_login',
 					'dt'        => 4,
-					'formatter' => function( $d, $row ) {
-						$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-						return $linkified_value;
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+					},
 				),
 				array(
 					'db'        => 'display_name',
 					'dt'        => 5,
-					'formatter' => function( $d, $row ) {
-						$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-						return $linkified_value;
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+					},
 				),
 				array(
 					'db'        => 'time_spent',
 					'dt'        => 6,
-					'formatter' => function( $d, $row ) {
+					'formatter' => function ( $d, $row ) {
 						return esc_attr( apply_filters( 'uat_time_spent_format', $d ) );
-					}
+					},
 				),
 				array(
 					'db'        => 'user_id',
 					'dt'        => 7,
-					'formatter' => function( $d, $row ) {
-						$user_role = '';
-						if ( $d && intval( $d ) ) :
-							$user_meta = wp_cache_get( 'uat_user_meta_' . $d, 'user-activity-tracking-and-log' );
-							if ( ! $user_meta ) :
-								$user_meta = get_userdata( intval( $d ) );
-								endif;
-							if ( $user_meta && isset( $user_meta->roles ) ) :
-								$user_roles = $user_meta->roles;
-								if ( isset( $user_roles[0] ) ) :
-									$user_role = $user_roles[0];
-									endif;
-								endif;
-							endif;
-						return $user_role ? $user_role : 'N/A';
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						static $cache = array();
+						$uid = (int) $d;
+						if ( $uid <= 0 ) {
+							return $na;
+						}
+						if ( isset( $cache[ $uid ] ) ) {
+							return $cache[ $uid ];
+						}
+						$user = get_userdata( $uid );
+						if ( $user && ! empty( $user->roles[0] ) ) {
+							return $cache[ $uid ] = $user->roles[0];
+						}
+						return $cache[ $uid ] = $na;
+					},
 				),
 				array(
 					'db'        => 'city',
 					'dt'        => 8,
-					'formatter' => function( $d, $row ) {
-						return $d ? esc_attr( $d ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d ? esc_attr( $d ) : $na;
+					},
 				),
 				array(
 					'db'        => 'user_ip',
 					'dt'        => 9,
-					'formatter' => function( $d, $row ) {
-						$value = $d ? apply_filters( 'moove_activity_tracking_ip_filter', $d ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-						$linkified_value = apply_filters( 'uat_linkify_user_session', $value, $row );
-						return $linkified_value;
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						$value = $d ? apply_filters( 'moove_activity_tracking_ip_filter', $d ) : $na;
+						return apply_filters( 'uat_linkify_user_session', $value, $row );
+					},
 				),
 				array(
 					'db'        => 'referer',
 					'dt'        => 10,
-					'formatter' => function( $d, $row ) {
-						return $d ? esc_attr( $d ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d ? esc_attr( $d ) : $na;
+					},
 				),
 				array(
 					'db'        => 'permalink',
 					'dt'        => 11,
-					'formatter' => function( $d, $row ) {
-						$permalink = intval( $row['post_id'] ) > 0 ? get_permalink( $row['post_id'] ) : ( isset( $row['request_url'] ) && $row['request_url'] ? $row['request_url'] : false );
-						return $permalink ? esc_url( $permalink ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-					}
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						$pid = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+						if ( $pid > 0 ) {
+							$permalink = get_permalink( $pid );
+							if ( $permalink ) {
+								return esc_url( $permalink );
+							}
+						}
+						if ( ! empty( $row['request_url'] ) ) {
+							return esc_url( $row['request_url'] );
+						}
+						return $na;
+					},
 				),
 				array(
 					'db'        => 'request_url',
 					'dt'        => 12,
-					'formatter' => function( $d, $row ) {
-						return $d ? esc_url( $d ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-					}
-				)
+					'formatter' => function ( $d, $row ) use ( $na ) {
+						return $d ? esc_url( $d ) : $na;
+					},
+				),
 			);
 
 			$dt_serverside_ssp = new Activity_DT_Manager();
@@ -404,6 +430,225 @@ class Moove_Activity_Controller {
 				$dt_serverside_ssp->simple( $_GET, $columns )
 			);
 		endif;
+		die();
+	}
+
+	/**
+	 * Build the list of column definitions used by the paginated CSV export
+	 * endpoint. Mirrors the column array used by uat_activity_export_dt_logs()
+	 * so the output of the chunked export is byte-identical to the legacy
+	 * single-shot export. Kept as a separate helper to avoid mutating the
+	 * existing endpoint while still letting both code paths share formatting
+	 * logic.
+	 *
+	 * @return array
+	 */
+	public static function uat_activity_export_dt_columns() {
+		// Lift per-request lookups out of per-row closures so they run once
+		// per chunk instead of once per row. Pairs with
+		// Activity_DT_Manager::export_paginated() which bulk-primes the post
+		// + user object caches before formatters run.
+		$screen_options = get_user_meta( get_current_user_id(), 'moove_activity_screen_options', true );
+		$selected_val   = isset( $screen_options['moove-activity-dtf'] ) ? $screen_options['moove-activity-dtf'] : 'a';
+		$na             = esc_html__( 'N/A', 'user-activity-tracking-and-log' );
+
+		$columns = array(
+			array(
+				'db'        => 'visit_date',
+				'dt'        => 0,
+				'formatter' => function ( $d, $row ) use ( $selected_val, $screen_options ) {
+					return esc_attr( moove_activity_convert_date( $selected_val, $d, $screen_options ) );
+				},
+			),
+			array(
+				'db'        => 'post_title',
+				'dt'        => 1,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					if ( ! empty( $d ) ) {
+						return $d;
+					}
+					return ! empty( $row['archive_title'] ) ? $row['archive_title'] : $na;
+				},
+			),
+			array(
+				'db'        => 'post_type',
+				'dt'        => 2,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					static $cache          = array();
+					static $archive_labels = array(
+						'archive'      => 'Archive',
+						'post_archive' => 'Blog Archive',
+						'front_page'   => 'Front Page',
+					);
+					if ( '' === $d || null === $d ) {
+						return $na;
+					}
+					if ( isset( $archive_labels[ $d ] ) ) {
+						return $archive_labels[ $d ];
+					}
+					if ( isset( $cache[ $d ] ) ) {
+						return $cache[ $d ];
+					}
+					$pt          = get_post_type_object( $d );
+					$cache[ $d ] = $pt && isset( $pt->label ) ? esc_attr( $pt->label ) : $na;
+					return $cache[ $d ];
+				},
+			),
+			array(
+				'db'        => 'user_email',
+				'dt'        => 3,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d && 'N/A' !== $d ? $d : $na;
+				},
+			),
+			array(
+				'db'        => 'user_login',
+				'dt'        => 4,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d && 'N/A' !== $d ? $d : $na;
+				},
+			),
+			array(
+				'db'        => 'display_name',
+				'dt'        => 5,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d && 'N/A' !== $d ? $d : $na;
+				},
+			),
+			array(
+				'db'        => 'time_spent',
+				'dt'        => 6,
+				'formatter' => function ( $d, $row ) {
+					return esc_attr( apply_filters( 'uat_time_spent_format', $d ) );
+				},
+			),
+			array(
+				'db'        => 'user_id',
+				'dt'        => 7,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					static $cache = array();
+					$uid = (int) $d;
+					if ( $uid <= 0 ) {
+						return $na;
+					}
+					if ( isset( $cache[ $uid ] ) ) {
+						return $cache[ $uid ];
+					}
+					$user = get_userdata( $uid );
+					if ( $user && ! empty( $user->roles[0] ) ) {
+						return $cache[ $uid ] = $user->roles[0];
+					}
+					return $cache[ $uid ] = $na;
+				},
+			),
+			array(
+				'db'        => 'city',
+				'dt'        => 8,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d ? esc_attr( $d ) : $na;
+				},
+			),
+			array(
+				'db'        => 'user_ip',
+				'dt'        => 9,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d ? apply_filters( 'moove_activity_tracking_ip_filter', $d ) : $na;
+				},
+			),
+			array(
+				'db'        => 'referer',
+				'dt'        => 10,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d ? esc_attr( $d ) : $na;
+				},
+			),
+			array(
+				'db'        => 'permalink',
+				'dt'        => 11,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					$pid = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+					if ( $pid > 0 ) {
+						$permalink = get_permalink( $pid );
+						if ( $permalink ) {
+							return esc_url( $permalink );
+						}
+					}
+					if ( ! empty( $row['request_url'] ) ) {
+						return esc_url( $row['request_url'] );
+					}
+					return $na;
+				},
+			),
+			array(
+				'db'        => 'request_url',
+				'dt'        => 12,
+				'formatter' => function ( $d, $row ) use ( $na ) {
+					return $d ? esc_url( $d ) : $na;
+				},
+			),
+		);
+
+		$headers_f = apply_filters( 'uat_csv_dt_header', array() );
+		if ( $headers_f && ! empty( $headers_f ) ) :
+			$col_id = 12;
+			foreach ( $headers_f as $header_key => $header_f ) :
+				$header_key = sanitize_title( $header_key );
+				$col_id++;
+				$columns[] = array(
+					'db'   => 'user_id',
+					'dt'   => $col_id,
+					'hook' => $header_key,
+				);
+			endforeach;
+		endif;
+
+		return $columns;
+	}
+
+	/**
+	 * Paginated CSV export endpoint. Fixes "Allowed memory size exhausted"
+	 * errors triggered by uat_activity_export_dt_logs() loading every row
+	 * from `wp_moove_activity_log` into memory in a single request.
+	 *
+	 * Uses keyset pagination (`last_id` cursor) so chunk N has the same cost
+	 * as chunk 1 — OFFSET pagination becomes O(N²) for full-table exports.
+	 * The first response (`last_id === 0`) also includes the headers row and
+	 * the total record count so the client can render progress.
+	 */
+	public static function uat_activity_export_dt_logs_paginated() {
+		$dt_nonce = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
+		$type     = isset( $_GET['type'] ) ? sanitize_text_field( wp_unslash( $_GET['type'] ) ) : 'all';
+		$last_id  = isset( $_GET['last_id'] ) ? max( 0, intval( $_GET['last_id'] ) ) : 0;
+		$limit    = isset( $_GET['limit'] ) ? intval( $_GET['limit'] ) : 5000;
+		$limit    = max( 1, min( 20000, $limit ) );
+
+		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) ) {
+			echo wp_json_encode(
+				array(
+					'success'      => false,
+					'data'         => array(),
+					'recordsTotal' => 0,
+					'has_more'     => false,
+				)
+			);
+			die();
+		}
+
+		// Activity logs can be large — reduce per-chunk PHP overhead.
+		if ( function_exists( 'wp_raise_memory_limit' ) ) {
+			wp_raise_memory_limit( 'admin' );
+		}
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 120 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+
+		$columns           = self::uat_activity_export_dt_columns();
+		$dt_serverside_ssp = new Activity_DT_Manager();
+		$payload           = $dt_serverside_ssp->export_paginated( $_GET, $columns, $type, $last_id, $limit ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- nonce verified above.
+
+		$payload['success'] = true;
+
+		echo wp_json_encode( $payload );
 		die();
 	}
 
@@ -905,7 +1150,7 @@ class Moove_Activity_Controller {
 				$log_id = apply_filters( 'uat_archive_log_id', false );
 			endif;
 		endif;
-		echo wp_kses( $log_id, array() );
+		echo wp_json_encode( array( 'id' => $log_id ) );
 		die();
 	}
 

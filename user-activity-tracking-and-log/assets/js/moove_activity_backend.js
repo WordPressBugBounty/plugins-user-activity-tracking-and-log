@@ -4,6 +4,176 @@
 		var deactivation_started = false;
 		var clear_all_log_started = false;
 
+    /**
+     * Paginated CSV export. Replaces the legacy single-shot export that
+     * fatally errored ("Allowed memory size exhausted") on large activity
+     * log tables. Pulls rows from the server in chunks of `chunkSize`,
+     * concatenates them into a CSV string and triggers the browser
+     * download once all chunks have been received.
+     *
+     * @param {object} options
+     *   - dtNonce      {string}  Nonce for the export endpoint.
+     *   - dtParams     {object}  DataTables ajax.params() payload (filters/order).
+     *   - type         {string}  'all' | 'filtered' | 'cpt'.
+     *   - extraParams  {object}  Additional query params (e.g. { log_id: 12 }).
+     *   - filename     {string}  CSV filename for the download.
+     *   - chunkSize    {number}  Rows per request. Default 1000.
+     *   - button       {jQuery}  Container button (disabled while running).
+     *   - buttonLabel  {jQuery}  Inner label element used for status text.
+     *   - originalText {string}  Label text to restore once finished.
+     */
+    function uat_paginated_csv_export( options ) {
+        var chunkSize    = options.chunkSize || 5000;
+        // Accumulate each chunk as a Blob in this array. Avoids the V8
+        // ~512MB max string length limit hit when concatenating millions
+        // of rows into a single CSV string.
+        var csvParts     = [];
+        var headersDone  = false;
+        var totalRows    = 0;
+        var fetchedRows  = 0;
+
+        function processRow( row ) {
+            var finalVal = '';
+            for ( var j = 0; j < row.length; j++ ) {
+                var innerValue = row[ j ] === null ? '' : row[ j ].toString();
+                if ( row[ j ] instanceof Date ) {
+                    innerValue = row[ j ].toLocaleString();
+                }
+                var result = innerValue.replace( /"/g, '""' );
+                if ( result.search( /("|,|\n)/g ) >= 0 ) {
+                    result = '"' + result + '"';
+                }
+                if ( j > 0 ) {
+                    finalVal += ',';
+                }
+                finalVal += result;
+            }
+            return finalVal + '\n';
+        }
+
+        function restoreButton() {
+            if ( options.button ) {
+                options.button.prop( 'disabled', false ).removeClass( 'dt-disabled' );
+            }
+            if ( options.buttonLabel && options.originalText ) {
+                options.buttonLabel.text( options.originalText );
+            }
+        }
+
+        function triggerDownload() {
+            var blob = new Blob( csvParts, { type: 'text/csv;charset=utf-8;' } );
+            csvParts = null;
+            if ( navigator.msSaveBlob ) {
+                navigator.msSaveBlob( blob, options.filename );
+            } else {
+                var link = document.createElement( 'a' );
+                if ( link.download !== undefined ) {
+                    var url = URL.createObjectURL( blob );
+                    link.setAttribute( 'href', url );
+                    link.setAttribute( 'download', options.filename );
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild( link );
+                    link.click();
+                    document.body.removeChild( link );
+                }
+            }
+            restoreButton();
+        }
+
+        function setProgress( fetched, total ) {
+            if ( ! options.buttonLabel ) {
+                return;
+            }
+            if ( total > 0 ) {
+                var percent = Math.min( 100, Math.round( ( fetched / total ) * 100 ) );
+                options.buttonLabel.text( 'Exporting ' + percent + '%' );
+            } else {
+                options.buttonLabel.text( 'Exporting ' + fetched );
+            }
+        }
+
+        function fetchChunk( lastId ) {
+            var queryParams = {
+                dt_nonce: options.dtNonce,
+                action:   'uat_activity_export_dt_logs_paginated',
+                type:     options.type,
+                last_id:  lastId,
+                limit:    chunkSize
+            };
+            if ( options.extraParams ) {
+                jQuery.extend( queryParams, options.extraParams );
+            }
+
+            var url = moove_backend_activity_scripts.ajaxurl + '?' + jQuery.param( queryParams );
+
+            jQuery.ajax({
+                url: url,
+                method: 'POST',
+                data: options.dtParams || {},
+                dataType: 'text',
+                success: function( res ) {
+                    var response;
+                    try {
+                        response = JSON.parse( res );
+                    } catch ( e ) {
+                        restoreButton();
+                        if ( window.console && console.error ) {
+                            console.error( 'UAT export: invalid JSON response', e );
+                        }
+                        return;
+                    }
+                    if ( ! response || response.success === false ) {
+                        restoreButton();
+                        return;
+                    }
+
+                    // Build this chunk into a single string, then push as a
+                    // Blob so the per-chunk string can be GC'd before the
+                    // next request.
+                    var chunkText = '';
+                    if ( ! headersDone && response.headers ) {
+                        for ( var z = 0; z < response.headers.length; z++ ) {
+                            chunkText += processRow( response.headers[ z ] );
+                        }
+                        headersDone = true;
+                    }
+
+                    if ( typeof response.recordsTotal !== 'undefined' ) {
+                        totalRows = parseInt( response.recordsTotal, 10 ) || 0;
+                    }
+
+                    var rows     = response.data || [];
+                    var hasMore  = !! response.has_more;
+                    var rowCount = rows.length;
+                    var nextId   = typeof response.last_id !== 'undefined' ? parseInt( response.last_id, 10 ) : lastId;
+                    for ( var i = 0; i < rowCount; i++ ) {
+                        chunkText += processRow( rows[ i ] );
+                    }
+                    if ( chunkText.length ) {
+                        csvParts.push( new Blob( [ chunkText ], { type: 'text/csv;charset=utf-8;' } ) );
+                    }
+                    chunkText = '';
+                    response = null;
+                    rows     = null;
+
+                    fetchedRows += rowCount;
+                    setProgress( fetchedRows, totalRows );
+
+                    if ( hasMore && rowCount > 0 && nextId > lastId ) {
+                        fetchChunk( nextId );
+                    } else {
+                        triggerDownload();
+                    }
+                },
+                error: function() {
+                    restoreButton();
+                }
+            });
+        }
+
+        fetchChunk( 0 );
+    }
+
     $(document).on('click','.button-uat-deactivate-licence, .uat_deactivate_license_key',function(e){
       if ( ! deactivation_started ) {
         e.preventDefault();
@@ -215,64 +385,16 @@
 							var button_dt = button_s.text();
 							button_s.text('Exporting...');
 							button.prop('disabled', true).addClass('dt-disabled');
-	            jQuery.ajax({
-	                "url": moove_backend_activity_scripts.ajaxurl + "?dt_nonce=" + dt_nonce + "&action=uat_activity_export_dt_logs&type=all",
-	                "data": dt.ajax.params(),
-	                "success": function(res, status, xhr) {
-	                	var filename = 'tracking-log-' + Date.now() + '-all.csv';
-	                	var response = JSON.parse( res );
-	                	var headers = response.headers;
-	                	var rows = response.data;
-										var processRow = function (row) {
-							        var finalVal = '';
 
-							        for (var j = 0; j < row.length; j++) {
-						            var innerValue = row[j] === null ? '' : row[j].toString();
-						            if (row[j] instanceof Date) {
-						              innerValue = row[j].toLocaleString();
-						            };
-						            var result = innerValue.replace(/"/g, '""');
-						            if (result.search(/("|,|\n)/g) >= 0) {
-						              result = '"' + result + '"';
-						            }
-						            if (j > 0) {
-						              finalVal += ',';
-						            }
-						            finalVal += result;
-							        }
-							        return finalVal + '\n';
-										};
-
-								    var csvFile = '';
-								    for (var z = 0; z < headers.length; z++) {
-								      csvFile += processRow(headers[z]);
-								    }
-
-								    for (var i = 0; i < rows.length; i++) {
-								      csvFile += processRow(rows[i]);
-								    }
-
-								    var blob = new Blob([csvFile], { type: 'text/csv;charset=utf-8;' });
-								    if (navigator.msSaveBlob) { // IE 10+
-								      navigator.msSaveBlob(blob, filename);
-								    } else {
-							        var link = document.createElement("a");
-							        if (link.download !== undefined) { // feature detection
-						            // Browsers that support HTML5 download attribute
-						            var url = URL.createObjectURL(blob);
-						            link.setAttribute("href", url);
-						            link.setAttribute("download", filename);
-						            link.style.visibility = 'hidden';
-						            document.body.appendChild(link);
-						            link.click();
-						            document.body.removeChild(link);
-							        }
-								    }
-
-								    button.prop('disabled', false).removeClass('dt-disabled');
-								    button_s.text(button_dt);
-	                }
-	            });
+							uat_paginated_csv_export({
+								dtNonce:     dt_nonce,
+								dtParams:    dt.ajax.params(),
+								type:        'all',
+								filename:    'tracking-log-' + Date.now() + '-all.csv',
+								button:      button,
+								buttonLabel: button_s,
+								originalText: button_dt
+							});
 	        	}
 					},
 					{
@@ -292,64 +414,16 @@
 							var button_dt = button_s.text();
 							button_s.text('Exporting...');
 							button.prop('disabled', true).addClass('dt-disabled');
-	            jQuery.ajax({
-	                "url": moove_backend_activity_scripts.ajaxurl + "?dt_nonce="+dt_nonce+"&action=uat_activity_export_dt_logs&type=filtered",
-	                "data": dt.ajax.params(),
-	                "success": function(res, status, xhr) {
-	                	var filename = 'tracking-log-' + Date.now() + '-filtered.csv';
-	                	var response = JSON.parse( res );
-	                	var headers = response.headers;
-	                	var rows = response.data;
-										var processRow = function (row) {
-							        var finalVal = '';
 
-							        for (var j = 0; j < row.length; j++) {
-						            var innerValue = row[j] === null ? '' : row[j].toString();
-						            if (row[j] instanceof Date) {
-						              innerValue = row[j].toLocaleString();
-						            };
-						            var result = innerValue.replace(/"/g, '""');
-						            if (result.search(/("|,|\n)/g) >= 0) {
-						              result = '"' + result + '"';
-						            }
-						            if (j > 0) {
-						              finalVal += ',';
-						            }
-						            finalVal += result;
-							        }
-							        return finalVal + '\n';
-										};
-
-								    var csvFile = '';
-								    for (var z = 0; z < headers.length; z++) {
-								      csvFile += processRow(headers[z]);
-								    }
-
-								    for (var i = 0; i < rows.length; i++) {
-								      csvFile += processRow(rows[i]);
-								    }
-
-								    var blob = new Blob([csvFile], { type: 'text/csv;charset=utf-8;' });
-								    if (navigator.msSaveBlob) { // IE 10+
-								      navigator.msSaveBlob(blob, filename);
-								    } else {
-							        var link = document.createElement("a");
-							        if (link.download !== undefined) { // feature detection
-						            // Browsers that support HTML5 download attribute
-						            var url = URL.createObjectURL(blob);
-						            link.setAttribute("href", url);
-						            link.setAttribute("download", filename);
-						            link.style.visibility = 'hidden';
-						            document.body.appendChild(link);
-						            link.click();
-						            document.body.removeChild(link);
-							        }
-								    }
-
-								    button.prop('disabled', false).removeClass('dt-disabled');
-								    button_s.text(button_dt);
-	                }
-	            });
+							uat_paginated_csv_export({
+								dtNonce:     dt_nonce,
+								dtParams:    dt.ajax.params(),
+								type:        'filtered',
+								filename:    'tracking-log-' + Date.now() + '-filtered.csv',
+								button:      button,
+								buttonLabel: button_s,
+								originalText: button_dt
+							});
 	        	}
 					},
 					{

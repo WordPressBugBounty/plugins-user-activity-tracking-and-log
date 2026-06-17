@@ -46,6 +46,7 @@ class Moove_Activity_Actions {
 		// AJAX Data Tables.
 		add_action( 'wp_ajax_uat_activity_get_dt_logs', array( 'Moove_Activity_Controller', 'uat_activity_get_dt_logs' ) );
 		add_action( 'wp_ajax_uat_activity_export_dt_logs', array( 'Moove_Activity_Controller', 'uat_activity_export_dt_logs' ) );
+		add_action( 'wp_ajax_uat_activity_export_dt_logs_paginated', array( 'Moove_Activity_Controller', 'uat_activity_export_dt_logs_paginated' ) );
 		add_action( 'wp_ajax_uat_activity_delete_dt_logs', array( 'Moove_Activity_Controller', 'uat_activity_delete_dt_logs' ) );
 		add_action( 'wp_ajax_uat_manage_table_settings', array( 'Moove_Activity_Controller', 'uat_manage_table_settings' ), 10, 1 );
 

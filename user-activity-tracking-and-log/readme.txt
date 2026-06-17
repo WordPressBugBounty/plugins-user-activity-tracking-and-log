@@ -1,7 +1,7 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.2.2
+Stable tag: 4.2.3
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
 Tested up to: 7.0
@@ -143,6 +143,12 @@ We have a [dedicated support forum](https://support.mooveagency.com/forum/user-a
 13. User Activity Tracking and Log - Advanced Settings [Premium]
 
 == Changelog ==
+
+= 4.2.3: 17 June 2026 =
+* Performance: use navigator.sendBeacon for pageview tracking when time-spent tracking is disabled (non-blocking, no connection held open)
+* Performance: added sessionStorage-based dedupe to prevent double-fires within the same browser session
+* Minor fixes
+
 = 4.2.2: 25 May 2026 =
 * Minor fixes
 * PHP 8 compatibility issues fixed
