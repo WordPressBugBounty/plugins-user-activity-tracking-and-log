@@ -10,10 +10,18 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 } // Exit if accessed directly
-if ( function_exists('wp_cache_flush_group') ) :
-	wp_cache_flush_group( 'user-activity-tracking-and-log' );
-else: 
-	wp_cache_flush();
+
+/*
+ * Invalidate the plugin's own cached entries so the table reflects the
+ * latest state of the activity log when an admin (re)opens this page.
+ *
+ * This used to call wp_cache_flush() which wipes the entire site-wide
+ * object cache on Redis / Memcached — catastrophic on busy sites.
+ * Moove_UAT_Cache::bump() invalidates only the keys this plugin owns,
+ * in constant time, by incrementing the cache namespace version.
+ */
+if ( class_exists( 'Moove_UAT_Cache' ) ) :
+	Moove_UAT_Cache::bump();
 endif;
 $uat_controller  = new Moove_Activity_Controller();
 $view_cnt        = new Moove_Activity_View();
@@ -32,6 +40,8 @@ $settings_perm = apply_filters( 'uat_log_settings_capability', 'manage_options' 
 
 $logs_imported = $uat_controller->moove_importer_check_database();
 if ( ! $logs_imported ) :
+	// Schedules a background batch — returns immediately. No more
+	// page-blocking full-site scan on first admin load.
 	$uat_controller->import_log_to_database();
 endif;
 

@@ -1,5 +1,11 @@
 (function($){
 	var log_id = 0;
+	var log_token = '';
+	// Prevents double-fires within the SAME page load (e.g. duplicate
+	// script tag, React strict-mode double render, dev overlays). We
+	// deliberately do NOT persist this across page loads — refreshing
+	// the same page is a legitimate new pageview and must be tracked.
+	var pageview_sent = false;
 
 	$(document).ready(function() {
 		if (
@@ -10,20 +16,13 @@
 			return;
 		}
 
+		if ( pageview_sent ) {
+			return;
+		}
+		pageview_sent = true;
+
 		var post_id      = moove_frontend_activity_scripts.post_id;
 		var request_url  = window.location.href;
-
-		// Skip if this post was already tracked in this browser session (prevents
-		// double-fires from duplicate script execution or fast SPA-style navigation).
-		var dedupe_key = 'uat_pv_' + post_id + '_' + window.location.pathname;
-		try {
-			if ( sessionStorage.getItem( dedupe_key ) ) {
-				return;
-			}
-			sessionStorage.setItem( dedupe_key, '1' );
-		} catch (e) {
-			// sessionStorage unavailable — continue without dedupe.
-		}
 
 		// Check whether time-spent tracking is enabled for this visitor.
 		var ts_enabled = false;
@@ -68,6 +67,7 @@
 						// Support both plain integer responses and {id: N} JSON objects.
 						if ( response && typeof response === 'object' && response.id ) {
 							log_id = response.id;
+							log_token = response.tok || '';
 						} else if ( response && isFinite( response ) && parseInt( response, 10 ) > 0 ) {
 							log_id = parseInt( response, 10 );
 						}
@@ -78,6 +78,9 @@
 									var log_data = new FormData();
 									log_data.append( 'action', 'moove_activity_track_unload' );
 									log_data.append( 'log_id', log_id );
+									if ( log_token ) {
+										log_data.append( 'tok', log_token );
+									}
 									navigator.sendBeacon( moove_frontend_activity_scripts.ajaxurl, log_data );
 								} else {
 									$.post(
@@ -85,6 +88,7 @@
 										{
 											action: 'moove_activity_track_unload',
 											log_id: log_id,
+											tok:    log_token,
 										}
 									);
 								}

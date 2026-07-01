@@ -11,6 +11,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 } // Exit if accessed directly
 
+$licence_perm = apply_filters( 'uat_licence_capability', 'manage_options' );
+if ( ! current_user_can( $licence_perm ) ) {
+	wp_die( esc_html__( 'You do not have permission to access this page.', 'user-activity-tracking-and-log' ), '', array( 'response' => 403 ) );
+}
+
 ?>
 
 <h2><?php esc_html_e( 'Licence Manager', 'import-uat-feed' ); ?></h2>

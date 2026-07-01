@@ -25,6 +25,25 @@ class Moove_Activity_Controller {
 	public function __construct() {
 	}
 
+	/**
+	 * Wrap a value through the `uat_linkify_user_session` filter while
+	 * keeping the unfiltered fallback safe to render in DataTables.
+	 *
+	 * Third-party integrations may hook this filter to wrap the value
+	 * in an `<a>` tag (linking to a user-session view), so we cannot
+	 * unconditionally escape the output. If the filter returned the
+	 * value unchanged we treat it as untrusted user input and escape it.
+	 *
+	 * @param string $value Raw value from the row.
+	 * @param array  $row   Full row context passed to the filter.
+	 * @return string Safe HTML.
+	 */
+	public static function safe_linkify( $value, $row ) {
+		$value    = (string) $value;
+		$filtered = apply_filters( 'uat_linkify_user_session', $value, $row );
+		return ( $filtered === $value ) ? esc_html( $value ) : (string) $filtered;
+	}
+
 	public static function delete_abandoned_logs() {
 		$db_controller = new Moove_Activity_Database_Model();
 		$db_controller->delete_abandoned_logs();
@@ -123,7 +142,7 @@ class Moove_Activity_Controller {
 						'db'        => 'user_email',
 						'dt'        => 3,
 						'formatter' => function( $d, $row ) {
-							$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
+							$linkified_value = $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 							return $linkified_value;
 						}
 					),
@@ -132,7 +151,7 @@ class Moove_Activity_Controller {
 						'db'        => 'user_login',
 						'dt'        => 4,
 						'formatter' => function( $d, $row ) {
-							$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
+							$linkified_value = $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 							return $linkified_value;
 						}
 					),
@@ -140,7 +159,7 @@ class Moove_Activity_Controller {
 						'db'        => 'display_name',
 						'dt'        => 5,
 						'formatter' => function( $d, $row ) {
-							$linkified_value = $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
+							$linkified_value = $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
 							return $linkified_value;
 						}
 					),
@@ -157,7 +176,7 @@ class Moove_Activity_Controller {
 						'formatter' => function( $d, $row ) {
 							$user_role = '';
 							if ( $d && intval( $d ) ) :
-								$user_meta = wp_cache_get( 'uat_user_meta_' . $d, 'user-activity-tracking-and-log' );
+								$user_meta = Moove_UAT_Cache::get( 'uat_user_meta_' . $d );
 								if ( ! $user_meta ) :
 									$user_meta = get_userdata( intval( $d ) );
 									endif;
@@ -183,7 +202,7 @@ class Moove_Activity_Controller {
 						'dt'        => 9,
 						'formatter' => function( $d, $row ) {
 							$value = $d ? apply_filters( 'moove_activity_tracking_ip_filter', $d ) : esc_html__( 'N/A', 'user-activity-tracking-and-log' );
-							$linkified_value = apply_filters( 'uat_linkify_user_session', $value, $row );
+							$linkified_value = self::safe_linkify( $value, $row );
 							return $linkified_value;
 						}
 					),
@@ -261,6 +280,18 @@ class Moove_Activity_Controller {
 	 * Data Tables AJAX log
 	 */
 	public static function uat_activity_get_dt_logs() {
+		// Give the request enough headroom on cold caches with large logs.
+		// Without this, a single uncached query on a multi-million-row table
+		// can hit the default PHP timeout and surface as a generic
+		// DataTables "AJAX error" in the browser. Suppressed with `@` to stay
+		// quiet on hosts where set_time_limit() is disabled.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 120 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		if ( function_exists( 'wp_raise_memory_limit' ) ) {
+			wp_raise_memory_limit( 'admin' );
+		}
+
 		$dt_nonce = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
 
 		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) ) :
@@ -334,21 +365,21 @@ class Moove_Activity_Controller {
 					'db'        => 'user_email',
 					'dt'        => 3,
 					'formatter' => function ( $d, $row ) use ( $na ) {
-						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+						return $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : $na;
 					},
 				),
 				array(
 					'db'        => 'user_login',
 					'dt'        => 4,
 					'formatter' => function ( $d, $row ) use ( $na ) {
-						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+						return $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : $na;
 					},
 				),
 				array(
 					'db'        => 'display_name',
 					'dt'        => 5,
 					'formatter' => function ( $d, $row ) use ( $na ) {
-						return $d && 'N/A' !== $d ? apply_filters( 'uat_linkify_user_session', $d, $row ) : $na;
+						return $d && 'N/A' !== $d ? Moove_Activity_Controller::safe_linkify( $d, $row ) : $na;
 					},
 				),
 				array(
@@ -389,7 +420,7 @@ class Moove_Activity_Controller {
 					'dt'        => 9,
 					'formatter' => function ( $d, $row ) use ( $na ) {
 						$value = $d ? apply_filters( 'moove_activity_tracking_ip_filter', $d ) : $na;
-						return apply_filters( 'uat_linkify_user_session', $value, $row );
+						return self::safe_linkify( $value, $row );
 					},
 				),
 				array(
@@ -737,7 +768,7 @@ class Moove_Activity_Controller {
 					'formatter' => function( $d, $row ) {
 						$user_role = '';
 						if ( $d && intval( $d ) ) :
-							$user_meta = wp_cache_get( 'uat_user_meta_' . $d, 'user-activity-tracking-and-log' );
+							$user_meta = Moove_UAT_Cache::get( 'uat_user_meta_' . $d );
 							if ( ! $user_meta ) :
 								$user_meta = get_userdata( intval( $d ) );
 								endif;
@@ -890,64 +921,25 @@ class Moove_Activity_Controller {
 	}
 
 	/**
-	 * Importing logs stored in post_meta to database
+	 * Importing logs stored in post_meta to database.
 	 *
-	 * @return int $log_id Log_id.
+	 * Heavy: walks every published post on the site and inserts a row
+	 * per stored log entry. On large sites this can OOM or time out, so
+	 * the public entrypoint just kicks off a background cron batch and
+	 * returns. Callers (admin views) should NOT block on this.
+	 *
+	 * @return bool true when the job has been scheduled.
 	 */
 	public static function import_log_to_database() {
-		$post_types = get_post_types( array( 'public' => true ) );
-		unset( $post_types['attachment'] );
-		$uat_db_controller = new Moove_Activity_Database_Model();
-		$log_id            = false;
-		$query             = array(
-			'post_type'      => $post_types,
-			'post_status'    => 'publish',
-			'posts_per_page' => -1,
-			'meta_query'     => array( // phpcs:ignore
-				'relation' => 'OR',
-				array(
-					'key'     => 'ma_data',
-					'value'   => null,
-					'compare' => '!='
-				)
-			)
-		);
-		$log_query         = new WP_Query( $query );
-
-		if ( $log_query->have_posts() ) :
-			while ( $log_query->have_posts() ) :
-				$log_query->the_post();
-				$_post_meta      = get_post_meta( get_the_ID(), 'ma_data' );
-				$_ma_data_option = $_post_meta[0];
-				$ma_data         = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
-
-				if ( $ma_data['log'] && is_array( $ma_data['log'] ) ) :
-					foreach ( $ma_data['log'] as $log ) :
-						$date               = gmdate( 'Y-m-d H:i:s', $log['time'] );
-						$data_to_insert    = array(
-							'post_id'      => get_the_ID(),
-							'user_id'      => $log['uid'],
-							'status'       => $log['response_status'],
-							'user_ip'      => $log['show_ip'],
-							'city'         => $log['city'],
-							'display_name' => $log['display_name'],
-							'post_type'    => get_post_type( get_the_ID() ),
-							'referer'      => $log['referer'],
-							'month_year'   => gmdate( 'm', $log['time'] ) . gmdate( 'Y', $log['time'] ),
-							'visit_date'   => $date,
-							'campaign_id'  => isset( $ma_data['campaign_id'] ) ? $ma_data['campaign_id'] : ''
-						);
-						$save_to_db_enabled = apply_filters( 'moove_uat_filter_data', $data_to_insert );
-						if ( $save_to_db_enabled ) :
-							$log_id = $uat_db_controller->insert( $save_to_db_enabled );
-						endif;
-					endforeach;
-				endif;
-			endwhile;
-		endif;
-		wp_reset_postdata();
-		update_option( 'moove_importer_has_database', true );
-		return $log_id;
+		if ( get_option( 'moove_importer_has_database' ) ) {
+			return true;
+		}
+		if ( class_exists( 'Moove_UAT_Cron' ) ) {
+			if ( ! wp_next_scheduled( Moove_UAT_Cron::HOOK_IMPORT_LEGACY ) ) {
+				wp_schedule_single_event( time() + 5, Moove_UAT_Cron::HOOK_IMPORT_LEGACY, array( 0 ) );
+			}
+		}
+		return true;
 	}
 	/**
 	 * Create admin menu page
@@ -1023,7 +1015,7 @@ class Moove_Activity_Controller {
 			$_post_meta = get_post_meta( $post_id, 'ma_data' );
 			if ( isset( $_post_meta[0] ) ) :
 				$_ma_data_option = $_post_meta[0];
-				$ma_data         = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
+				$ma_data         = Moove_Activity_Content::decode_ma_data( $_ma_data_option );
 			endif;
 			$activity_status = 'updated';
 			$ip              = $uat_shrotcodes->moove_get_the_user_ip();
@@ -1052,7 +1044,7 @@ class Moove_Activity_Controller {
 						$ma_data                = array();
 						$campaign_id            = time() . $post_id;
 						$ma_data['campaign_id'] = $campaign_id;
-						update_post_meta( $post_id, 'ma_data', maybe_serialize( $ma_data ) ); // phpcs:ignore
+						update_post_meta( $post_id, 'ma_data', Moove_Activity_Content::encode_ma_data( $ma_data ) );
 						$log_id = $uat_controller->moove_create_log_entry( $data );
 					endif;
 				endif;
@@ -1104,14 +1096,24 @@ class Moove_Activity_Controller {
 					return;
 				endif;
 				$_post_meta      = get_post_meta( $post_id, 'ma_data' );
-				$_ma_data_option = isset( $_post_meta[0] ) ? $_post_meta[0] : maybe_serialize( array() ); // phpcs:ignore
-				$ma_data         = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
+				$_ma_data_option = isset( $_post_meta[0] ) ? $_post_meta[0] : '';
+				$ma_data         = Moove_Activity_Content::decode_ma_data( $_ma_data_option );
 				$activity_status = 'visited';
 				$ip              = $uat_shrotcodes->moove_get_the_user_ip();
 				$ip_uf           = $uat_shrotcodes->moove_get_the_user_ip( false );
 				$loc_enabled     = apply_filters( 'uat_show_location_by_ip', true );
 				$details         = $loc_enabled ? $uat_shrotcodes->get_location_details( $ip_uf ) : false;
 				$city            = $loc_enabled && isset( $details->city ) ? $details->city : '';
+
+				// On a geo cache miss, kick the lookup to the background
+				// so the front-end never waits on an external HTTP call.
+				// Subsequent page-views from the same IP will hit the
+				// warmed transient.
+				if ( $loc_enabled && '' === $city && $ip_uf && class_exists( 'Moove_UAT_Cron' ) ) {
+					if ( ! wp_next_scheduled( Moove_UAT_Cron::HOOK_RESOLVE_GEO, array( $ip_uf, 0 ) ) ) {
+						wp_schedule_single_event( time() + 5, Moove_UAT_Cron::HOOK_RESOLVE_GEO, array( $ip_uf, 0 ) );
+					}
+				}
 
 				$data = array(
 					'pid'    				=> $post_id,
@@ -1136,7 +1138,7 @@ class Moove_Activity_Controller {
 							$ma_data                = array();
 							$campaign_id            = time() . $post_id;
 							$ma_data['campaign_id'] = $campaign_id;
-							update_post_meta( $post_id, 'ma_data', maybe_serialize( $ma_data ) ); // phpcs:ignore
+							update_post_meta( $post_id, 'ma_data', Moove_Activity_Content::encode_ma_data( $ma_data ) );
 							$log_id = $uat_controller->moove_create_log_entry( $data );
 						endif;
 					endif;
@@ -1150,7 +1152,42 @@ class Moove_Activity_Controller {
 				$log_id = apply_filters( 'uat_archive_log_id', false );
 			endif;
 		endif;
-		echo wp_json_encode( array( 'id' => $log_id ) );
+
+		// Normalise $log_id to a positive integer for the JSON response.
+		// moove_create_log_entry() now returns a plain int, but the
+		// `uat_before_tracking_data_save_log_id` and `uat_archive_log_id`
+		// filters may still hand back the legacy JSON envelope
+		// (`'{"id":42}'`) from third-party extensions built against the
+		// old shape. If we forward that JSON string to JS unchanged,
+		// response.id becomes a nested JSON string, intval() on the unload
+		// endpoint returns 0, and Visit Duration is never written
+		// (v4.2.3 regression).
+		$resolved_id = 0;
+		if ( $log_id ) {
+			if ( is_string( $log_id ) ) {
+				$decoded     = json_decode( $log_id, true );
+				$resolved_id = is_array( $decoded ) && isset( $decoded['id'] ) ? (int) $decoded['id'] : (int) $log_id;
+			} elseif ( is_array( $log_id ) && isset( $log_id['id'] ) ) {
+				$resolved_id = (int) $log_id['id'];
+			} else {
+				$resolved_id = (int) $log_id;
+			}
+		}
+
+		// Issue a per-log session token so the unload endpoint can verify
+		// ownership (fixes the IDOR where any visitor could overwrite the
+		// time_spent of any other row by guessing the auto-increment ID).
+		$log_token = '';
+		if ( $resolved_id > 0 && class_exists( 'Moove_UAT_Security' ) ) {
+			$log_token = Moove_UAT_Security::issue_token_for_log( $resolved_id );
+		}
+
+		echo wp_json_encode(
+			array(
+				'id'  => $resolved_id,
+				'tok' => $log_token,
+			)
+		);
 		die();
 	}
 
@@ -1159,10 +1196,27 @@ class Moove_Activity_Controller {
 	 */
 	public static function moove_activity_track_unload() {
 		ignore_user_abort( true );
-		$uat_db_controller = new Moove_Activity_Database_Model();
-		$log_id        	= isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : false; // phpcs:ignore
+
+		// Same-origin gate — nopriv endpoint, no nonce (cache-safe).
+		if ( class_exists( 'Moove_UAT_Security' ) && ! Moove_UAT_Security::is_same_origin_request() ) {
+			wp_die( '', '', array( 'response' => 403 ) );
+		}
+
+		$log_id = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : false; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nopriv beacon; defences are origin + token.
+		$tok    = isset( $_POST['tok'] ) ? sanitize_text_field( wp_unslash( $_POST['tok'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+		if ( $log_id && class_exists( 'Moove_UAT_Security' ) ) {
+			if ( ! Moove_UAT_Security::verify_token_for_log( $log_id, $tok ) ) {
+				wp_die( '', '', array( 'response' => 403 ) );
+			}
+		}
+
 		if ( $log_id ) :
+			$uat_db_controller = new Moove_Activity_Database_Model();
 			$uat_db_controller->update_log_unload( $log_id );
+			if ( class_exists( 'Moove_UAT_Security' ) ) {
+				Moove_UAT_Security::consume_token( $log_id );
+			}
 		endif;
 		wp_die();
 	}
@@ -1189,7 +1243,10 @@ class Moove_Activity_Controller {
 		$query = array(
 			'post_type'      => $post_types,
 			'post_status'    => 'publish',
-			'posts_per_page' => -1,
+			'posts_per_page' => 500,
+			'paged'          => 1,
+			'fields'         => 'ids',
+			'no_found_rows'  => true,
 			'meta_query'     => array( // phpcs:ignore
 				'relation' => 'OR',
 				array(
@@ -1200,23 +1257,23 @@ class Moove_Activity_Controller {
 			)
 		);
 
-		$log_posts = new WP_Query( $query );
-		if ( $log_posts->have_posts() ) :
-			while ( $log_posts->have_posts() ) :
-				$log_posts->the_post();
-
-				$_post_meta      = get_post_meta( get_the_ID(), 'ma_data' );
-				$_ma_data_option = isset( $_post_meta[0] ) ? $_post_meta[0] : maybe_serialize( array() ); // phpcs:ignore
-				$ma_data         = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
-				$uat_db_controller->delete_log( 'post_id', get_the_ID() );
-				if ( isset( $ma_data['campaign_id'] ) ) :
-					delete_post_meta( get_the_ID(), 'ma_data' );
-					$uat_content->moove_save_post( get_the_ID(), 'enable' );
-				endif;
-			endwhile;
-
-		endif;
-		wp_reset_postdata();
+		do {
+			$log_posts = new WP_Query( $query );
+			$ids       = $log_posts->posts;
+			if ( empty( $ids ) ) {
+				break;
+			}
+			foreach ( $ids as $post_id ) {
+				$raw     = get_post_meta( $post_id, 'ma_data', true );
+				$ma_data = Moove_Activity_Content::decode_ma_data( $raw );
+				$uat_db_controller->delete_log( 'post_id', $post_id );
+				if ( isset( $ma_data['campaign_id'] ) ) {
+					delete_post_meta( $post_id, 'ma_data' );
+					$uat_content->moove_save_post( $post_id, 'enable' );
+				}
+			}
+			$query['paged']++;
+		} while ( count( $ids ) === 500 );
 	}
 
 	/**
@@ -1233,7 +1290,7 @@ class Moove_Activity_Controller {
 			$ma_data_old       = array();
 			if ( isset( $_post_meta[0] ) ) :
 				$_ma_data_option = $_post_meta[0];
-				$ma_data_old     = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
+				$ma_data_old     = Moove_Activity_Content::decode_ma_data( $_ma_data_option );
 			endif;
 			if ( isset( $ma_data_old['campaign_id'] ) ) :
 				$post_type         = get_post_type( $post_id );
@@ -1269,10 +1326,10 @@ class Moove_Activity_Controller {
 		$ma_data           = array();
 		$uat_controller    = new Moove_Activity_Controller();
 		$uat_db_controller = new Moove_Activity_Database_Model();
-		$log_id            = 'false';
+		$log_id            = 0;
 		if ( isset( $_post_meta[0] ) ) :
 			$_ma_data_option = $_post_meta[0];
-			$ma_data         = maybe_unserialize( $_ma_data_option ); // phpcs:ignore
+			$ma_data         = Moove_Activity_Content::decode_ma_data( $_ma_data_option );
 		endif;
 		$log = isset( $ma_data['log'] ) ? $ma_data['log'] : array();
 		// We don't have anything set up.

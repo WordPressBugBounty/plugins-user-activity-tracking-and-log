@@ -4,7 +4,7 @@
  *  Plugin Name: User Activity Tracking and Log
  *  Plugin URI: http://www.mooveagency.com
  *  Description: This plugin gives you the ability to track user activity on your website.
- *  Version: 4.2.3
+ *  Version: 4.3.0
  *  Author: Moove Agency
  *  Author URI: http://www.mooveagency.com
  *  License: GPLv2
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Exit if accessed directly.
 }
 
-define( 'MOOVE_UAT_VERSION', '4.2.3' );
+define( 'MOOVE_UAT_VERSION', '4.3.0' );
 
 if ( ! defined( 'MOOVE_SHOP_URL' ) ) :
 	define( 'MOOVE_SHOP_URL', 'https://shop.mooveagency.com' );
@@ -55,6 +55,31 @@ function moove_activity_activate() {
 	delete_option( 'moove_importer_has_database' );
 	delete_option( 'moove_importer_has_extras' );
 	delete_option( 'uat_db_support_request_url' );
+
+	// Make sure helpers exist before scheduling — activation can fire
+	// before plugins_loaded on bulk-activations.
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-database-model.php';
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-cron.php';
+
+	// Create / verify schema once at activation, not on every request.
+	if ( method_exists( 'Moove_Activity_Database_Model', 'maybe_create_activity_log_table' ) ) {
+		Moove_Activity_Database_Model::maybe_create_activity_log_table();
+	}
+	if ( method_exists( 'Moove_Activity_Database_Model', 'ensure_activity_log_indexes' ) ) {
+		Moove_Activity_Database_Model::ensure_activity_log_indexes();
+	}
+	update_option( 'uat_db_version', MOOVE_UAT_VERSION, true );
+
+	// Kick off the legacy post-meta importer in the background — never
+	// run that on a page render.
+	if ( ! wp_next_scheduled( Moove_UAT_Cron::HOOK_IMPORT_LEGACY ) ) {
+		wp_schedule_single_event( time() + 60, Moove_UAT_Cron::HOOK_IMPORT_LEGACY, array( 0 ) );
+	}
+
+	// Ensure the daily maintenance event is registered.
+	if ( ! wp_next_scheduled( Moove_UAT_Cron::HOOK_DAILY_MAINTENANCE ) ) {
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', Moove_UAT_Cron::HOOK_DAILY_MAINTENANCE );
+	}
 }
 
 /**
@@ -84,8 +109,14 @@ function moove_activity_deactivate() {
 		delete_option( 'moove_importer_has_database' );
 		delete_option( 'moove_importer_has_extras' );
 		delete_option( 'uat_db_support_request_url' );
+
+		// Stop all scheduled work so a deactivated plugin doesn't keep
+		// firing cron events.
+		if ( class_exists( 'Moove_UAT_Cron' ) ) {
+			Moove_UAT_Cron::unregister();
+		}
 	} catch ( Exception $e ) {
-		echo esc_html( $e->getMessage() );
+		error_log( '[UAT] deactivation: ' . $e->getMessage() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 	}
 }
 
@@ -143,6 +174,8 @@ function uat_activity_load_libs() {
 	/**
 	 * Controllers
 	 */
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-cache.php';
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-security.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-activity-dt-manager.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-license-manager.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-updater.php';
@@ -150,6 +183,12 @@ function uat_activity_load_libs() {
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-controller.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-array-order.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-database-model.php';
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-cron.php';
+
+	// Register background work (cron handlers + self-healing schedules).
+	if ( class_exists( 'Moove_UAT_Cron' ) ) {
+		Moove_UAT_Cron::register();
+	}
 
 	/**
 	 * Activity Actions

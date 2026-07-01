@@ -11,9 +11,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 } // Exit if accessed directly
 
+$settings_perm = apply_filters( 'uat_log_settings_capability', 'manage_options' );
+if ( ! current_user_can( $settings_perm ) ) {
+	wp_die( esc_html__( 'You do not have permission to access this page.', 'user-activity-tracking-and-log' ), '', array( 'response' => 403 ) );
+}
 
 $uat_controller = new Moove_Activity_Controller();
-$uat_controller->moove_remove_old_logs( -10 );
+// Per-screen cleanup is handled by the daily maintenance cron; running
+// it on every admin view caused heavy table writes on busy sites.
 $limited = apply_filters( 'uat_delete_option_limit', true );
 ?>
 
@@ -38,10 +43,14 @@ if ( isset( $_POST ) && isset( $_POST['moove_uat_nonce'] ) ) :
 						do_action( 'uat_tracking_settings_' . $_post_type_name, $activity_settings_option );
 					else :
 						if ( 'archives' !== $_post_type_name ) :
+							$page  = 1;
 							$query = array(
 								'post_type'      => $_post_type_name,
 								'post_status'    => 'publish',
-								'posts_per_page' => -1,
+								'posts_per_page' => 500,
+								'paged'          => $page,
+								'fields'         => 'ids',
+								'no_found_rows'  => true,
 								'meta_query'     => array( // phpcs:ignore
 									'relation' => 'OR',
 									array(
@@ -52,14 +61,14 @@ if ( isset( $_POST ) && isset( $_POST['moove_uat_nonce'] ) ) :
 								)
 							);
 
-							$log_posts = new WP_Query( $query );
-							if ( $log_posts->have_posts() ) :
-								while ( $log_posts->have_posts() ) :
-									$log_posts->the_post();
-									delete_post_meta( get_the_ID(), 'ma_data' );
-								endwhile;
-							endif;
-							wp_reset_postdata();
+							do {
+								$log_posts = new WP_Query( $query );
+								$ids       = $log_posts->posts;
+								foreach ( $ids as $pid ) {
+									delete_post_meta( $pid, 'ma_data' );
+								}
+								$query['paged']++;
+							} while ( count( $ids ) === 500 );
 						endif;
 					endif;
 				endforeach;
@@ -69,7 +78,7 @@ if ( isset( $_POST ) && isset( $_POST['moove_uat_nonce'] ) ) :
 				<?php
 			endif;
 		endif;
-	elseif ( isset( $_POST ) && isset( $_POST['moove_reset_uat_nonce'] ) && isset( $_POST['uat-reset-settings'] ) && intval( $_POST['uat-reset-settings'] ) === 1 ) :
+	elseif ( isset( $_POST['moove_reset_uat_nonce'] ) && isset( $_POST['uat-reset-settings'] ) && intval( $_POST['uat-reset-settings'] ) === 1 ) :
 		$nonce = sanitize_key( $_POST['moove_reset_uat_nonce'] );
 		if ( ! wp_verify_nonce( $nonce, 'moove_reset_uat_nonce_field' ) ) :
 			die( 'Security check' );
@@ -86,6 +95,13 @@ if ( isset( $_POST ) && isset( $_POST['moove_uat_nonce'] ) ) :
 		?>
 			<script>location.reload(true);</script>
 		<?php
+	elseif ( isset( $_POST['moove_uat_uninstall_nonce'] ) && isset( $_POST['uat_save_uninstall_pref'] ) ) :
+		$nonce = sanitize_key( wp_unslash( $_POST['moove_uat_uninstall_nonce'] ) );
+		if ( ! wp_verify_nonce( $nonce, 'moove_uat_uninstall_nonce_field' ) ) :
+			wp_die( esc_html__( 'Security check failed.', 'user-activity-tracking-and-log' ), '', array( 'response' => 403 ) );
+		endif;
+		update_option( 'uat_keep_data_on_uninstall', isset( $_POST['uat_keep_data_on_uninstall'] ) ? '1' : '0' );
+		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Uninstall preference saved.', 'user-activity-tracking-and-log' ) . '</p></div>';
 	endif;
 
 	$activity_settings_option = get_option( 'moove_post_act' );
@@ -155,6 +171,40 @@ if ( isset( $_POST ) && isset( $_POST['moove_uat_nonce'] ) ) :
 	<?php wp_nonce_field( 'moove_reset_uat_nonce_field', 'moove_reset_uat_nonce' ); ?>
 	<button type="submit" class="uat-brown-bnt uat-button pullright">
 		<?php esc_html_e( 'Reset Settings', 'user-activity-tracking-and-log' ); ?>
+	</button>
+</form>
+
+<br><br>
+<hr>
+<h2><?php esc_html_e( 'Plugin Uninstall', 'user-activity-tracking-and-log' ); ?></h2>
+<p class="description" style="font-size: 14px; margin: 15px 0 20px;"><?php esc_html_e( 'Control what happens to your activity log data when the plugin is uninstalled.', 'user-activity-tracking-and-log' ); ?></p>
+<form action="<?php echo esc_url( admin_url( '/admin.php?page=moove-activity-log&tab=activity-settings&sm=settings' ) ); ?>" method="post">
+	<?php
+	wp_nonce_field( 'moove_uat_uninstall_nonce_field', 'moove_uat_uninstall_nonce' );
+	$keep_data_on_uninstall = get_option( 'uat_keep_data_on_uninstall', '1' );
+	?>
+	<input type="hidden" name="uat_save_uninstall_pref" value="1">
+	<table class="form-table uat-activity-settings-table">
+		<tbody>
+			<tr>
+				<th scope="row">
+					<span><?php esc_html_e( 'Keep data on uninstall', 'user-activity-tracking-and-log' ); ?></span>
+				</th>
+				<td>
+					<label class="uat-checkbox-toggle">
+						<input type="checkbox" name="uat_keep_data_on_uninstall" value="1" <?php checked( '1', $keep_data_on_uninstall ); ?> >
+						<span class="uat-checkbox-slider" data-enable="Keep data" data-disable="Delete data"></span>
+					</label>
+					<p class="description" style="margin-top: 10px;">
+						<?php esc_html_e( 'When enabled (default), uninstalling the plugin will preserve the activity log table, plugin options and user preferences so the data is still available if you reinstall the plugin later.', 'user-activity-tracking-and-log' ); ?><br>
+						<strong><?php esc_html_e( 'Disable this option only if you want all plugin data permanently deleted when the plugin is removed.', 'user-activity-tracking-and-log' ); ?></strong>
+					</p>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+	<button type="submit" class="uat-orange-bnt">
+		<?php esc_html_e( 'Save Settings', 'user-activity-tracking-and-log' ); ?>
 	</button>
 </form>
 

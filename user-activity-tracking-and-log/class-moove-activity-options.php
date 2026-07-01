@@ -150,10 +150,14 @@ class Moove_Activity_Options {
 			if ( '1' === $activity_settings[ $post_type ] || 1 === $activity_settings[ $post_type ] ) :
 				continue;
 			else :
+				$page  = 1;
 				$query = array(
 					'post_type'      => $post_type,
 					'post_status'    => 'publish',
-					'posts_per_page' => -1,
+					'posts_per_page' => 500,
+					'paged'          => $page,
+					'fields'         => 'ids',
+					'no_found_rows'  => true,
 					'meta_query'     => array( // phpcs:ignore
 						'relation' => 'OR',
 						array(
@@ -164,14 +168,14 @@ class Moove_Activity_Options {
 					)
 				);
 
-				$log_posts = new WP_Query( $query );
-				if ( $log_posts->have_posts() ) :
-					while ( $log_posts->have_posts() ) :
-						$log_posts->the_post();
-						delete_post_meta( get_the_ID(), 'ma_data' );
-					endwhile;
-				endif;
-				wp_reset_postdata();
+				do {
+					$log_posts = new WP_Query( $query );
+					$ids       = $log_posts->posts;
+					foreach ( $ids as $pid ) {
+						delete_post_meta( $pid, 'ma_data' );
+					}
+					$query['paged']++;
+				} while ( count( $ids ) === 500 );
 			endif;
 		}
 	}

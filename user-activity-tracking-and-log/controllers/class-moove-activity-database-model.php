@@ -28,64 +28,149 @@ class Moove_Activity_Database_Model {
 
 	/**
 	 * Construct.
+	 *
+	 * The schema / migration logic is option-gated so per-request cost is
+	 * a few autoloaded option reads. Activation invokes the same code path
+	 * directly via the static helpers below.
 	 */
 	public function __construct() {
-		if ( ! get_option( 'moove_importer_has_database' ) ) {
-			global $wpdb;
-			$uat_db_init = wp_cache_get( 'uat_db_init', 'user-activity-tracking-and-log' );
-			if ( ! $uat_db_init ) :
-				// @codingStandardsIgnoreStart
-				$uat_db_init = $wpdb->query(
-					"CREATE TABLE IF NOT EXISTS {$wpdb->prefix}moove_activity_log(
-	        id integer not null auto_increment,
-	        post_id bigint not null,
-	        user_id bigint DEFAULT NULL,
-	        status TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        user_ip TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        city TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        post_type TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        referer TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        campaign_id TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        month_year TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        display_name TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
-	        visit_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	        PRIMARY KEY (id)
-	        );"
-				); // db call ok; no-cache ok.
-				// @codingStandardsIgnoreEnd
-				update_option( 'moove_importer_has_database', true );
-				wp_cache_set( 'uat_db_init', true, 'user-activity-tracking-and-log' );
-			endif;
+		self::maybe_create_activity_log_table();
+		self::maybe_add_extras_columns();
+		self::maybe_add_request_url_columns();
+		self::ensure_activity_log_indexes();
+	}
+
+	/**
+	 * Create the activity log table on first run. Idempotent: the option
+	 * flag short-circuits work after the first successful CREATE.
+	 */
+	public static function maybe_create_activity_log_table() {
+		if ( get_option( 'moove_importer_has_database' ) ) {
+			return;
+		}
+		if ( class_exists( 'Moove_UAT_Cache' ) && Moove_UAT_Cache::get( 'uat_db_init' ) ) {
+			return;
 		}
 
-		if ( ! get_option( 'moove_importer_has_extras' ) ) {
-			global $wpdb;
-			$uat_db_cols = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}moove_activity_log LIMIT 1" ); // db call ok; no-cache ok.
-			if ( ! isset( $uat_db_cols->type ) ) :
-				// @codingStandardsIgnoreStart
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN type INTEGER NOT NULL DEFAULT 0" ); // db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN permalink INTEGER NOT NULL DEFAULT 0" ); // db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN event INTEGER NOT NULL DEFAULT 0" ); // db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN time_spent INTEGER NOT NULL DEFAULT 0" ); // db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN extras TINYTEXT NULL DEFAULT NULL" ); // db call ok; no-cache ok.
-				// @codingStandardsIgnoreEnd
-				update_option( 'moove_importer_has_extras', true );
-			endif;
+		global $wpdb;
+		// @codingStandardsIgnoreStart
+		$wpdb->query(
+			"CREATE TABLE IF NOT EXISTS {$wpdb->prefix}moove_activity_log(
+        id integer not null auto_increment,
+        post_id bigint not null,
+        user_id bigint DEFAULT NULL,
+        status TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        user_ip TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        city TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        post_type TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        referer TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        campaign_id TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        month_year TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        display_name TINYTEXT CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+        visit_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+        );"
+		);
+		// @codingStandardsIgnoreEnd
+		update_option( 'moove_importer_has_database', true );
+		if ( class_exists( 'Moove_UAT_Cache' ) ) {
+			Moove_UAT_Cache::set( 'uat_db_init', true );
+		}
+	}
+
+	/**
+	 * Add the v2 columns (type, permalink, event, time_spent, extras).
+	 * Option-gated.
+	 */
+	public static function maybe_add_extras_columns() {
+		if ( get_option( 'moove_importer_has_extras' ) ) {
+			return;
+		}
+		global $wpdb;
+		$uat_db_cols = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}moove_activity_log LIMIT 1" ); // phpcs:ignore
+		if ( ! isset( $uat_db_cols->type ) ) {
+			// @codingStandardsIgnoreStart
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN type INTEGER NOT NULL DEFAULT 0" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN permalink INTEGER NOT NULL DEFAULT 0" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN event INTEGER NOT NULL DEFAULT 0" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN time_spent INTEGER NOT NULL DEFAULT 0" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN extras TINYTEXT NULL DEFAULT NULL" );
+			// @codingStandardsIgnoreEnd
+		}
+		update_option( 'moove_importer_has_extras', true );
+	}
+
+	/**
+	 * Add the v3 columns (request_url, query_vars, is_archive,
+	 * archive_title). Option-gated.
+	 */
+	public static function maybe_add_request_url_columns() {
+		if ( get_option( 'uat_db_support_request_url' ) ) {
+			return;
+		}
+		global $wpdb;
+		$uat_db_cols = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}moove_activity_log LIMIT 1" ); // phpcs:ignore
+		if ( ! isset( $uat_db_cols->request_url ) ) {
+			// @codingStandardsIgnoreStart
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN request_url TINYTEXT NULL DEFAULT NULL" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN query_vars TINYTEXT NULL DEFAULT NULL" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN is_archive TINYTEXT NULL DEFAULT NULL" );
+			$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN archive_title TINYTEXT NULL DEFAULT NULL" );
+			// @codingStandardsIgnoreEnd
+		}
+		update_option( 'uat_db_support_request_url', true );
+	}
+
+	/**
+	 * Ensure performance-critical indexes exist on the activity log table.
+	 *
+	 * Idempotent and cheap on subsequent loads: the option flag short-circuits
+	 * the work once it has been done, and each `ALTER TABLE` is only issued
+	 * when the index is actually missing.
+	 */
+	public static function ensure_activity_log_indexes() {
+		if ( get_option( 'uat_db_indexes_v1' ) ) {
+			return;
 		}
 
-		if ( ! get_option( 'uat_db_support_request_url' ) ) {
-			global $wpdb;
-			$uat_db_cols = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}moove_activity_log LIMIT 1" ); // db call ok; no-cache ok.
-			if ( ! isset( $uat_db_cols->request_url ) ) :
-				// @codingStandardsIgnoreStart
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN request_url TINYTEXT NULL DEFAULT NULL" );// db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN query_vars TINYTEXT NULL DEFAULT NULL" );// db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN is_archive TINYTEXT NULL DEFAULT NULL" );// db call ok; no-cache ok.
-				$wpdb->query( "ALTER TABLE {$wpdb->prefix}moove_activity_log ADD COLUMN archive_title TINYTEXT NULL DEFAULT NULL" );// db call ok; no-cache ok.
-				// @codingStandardsIgnoreEnd
-				update_option( 'uat_db_support_request_url', true );
-			endif;
-		}		
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'moove_activity_log';
+
+		// Build the set of existing index names so we don't try to add
+		// something that's already there (which would raise an error).
+		$existing = array();
+		$rows     = $wpdb->get_results( "SHOW INDEX FROM `{$table}`", ARRAY_A ); // phpcs:ignore -- identifier built from $wpdb->prefix.
+		if ( is_array( $rows ) ) {
+			foreach ( $rows as $row ) {
+				if ( isset( $row['Key_name'] ) ) {
+					$existing[ $row['Key_name'] ] = true;
+				}
+			}
+		}
+
+		$indexes = array(
+			// Default ORDER BY visit_date DESC + the month-year filter.
+			'uat_visit_date' => '`visit_date`',
+			// JOIN uat_log.post_id = posts_tbl.id + the cpt log filter.
+			'uat_post_id'    => '`post_id`',
+			// JOIN uat_log.user_id = users_tbl.id + the user filter.
+			'uat_user_id'    => '`user_id`',
+			// WHERE uat_log.post_type IN (...) — always present in the
+			// default query. TINYTEXT requires a prefix length.
+			'uat_post_type'  => '`post_type`(20)',
+		);
+
+		foreach ( $indexes as $name => $col_expr ) {
+			if ( isset( $existing[ $name ] ) ) {
+				continue;
+			}
+			// @codingStandardsIgnoreStart -- identifiers are hard-coded.
+			$wpdb->query( "ALTER TABLE `{$table}` ADD INDEX `{$name}` ({$col_expr})" );
+			// @codingStandardsIgnoreEnd
+		}
+
+		update_option( 'uat_db_indexes_v1', true, false );
 	}
 
 	public static function delete_abandoned_logs() {
@@ -129,7 +214,7 @@ class Moove_Activity_Database_Model {
 		global $wpdb;
 		$post_types = is_array( $post_types ) ? array_map( 'sanitize_key', $post_types ) : array();
 		$cache_key  = md5( implode( ',', $post_types ) );
-		$response   = wp_cache_get( 'uat_get_all_logs_' . $cache_key, 'user-activity-tracking-and-log' );
+		$response   = Moove_UAT_Cache::get( 'uat_get_all_logs_' . $cache_key );
 		if ( ! $response ) :
 			$placeholders = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
 
@@ -170,7 +255,7 @@ class Moove_Activity_Database_Model {
 				$query, // phpcs:ignore
 				ARRAY_A
 			); // db call ok; no-cache ok.
-			wp_cache_set( 'uat_get_all_logs_' . $cache_key, $response, 'user-activity-tracking-and-log' );
+			Moove_UAT_Cache::set( 'uat_get_all_logs_' . $cache_key, $response );
 		endif;
 		return $response;
 	}
@@ -184,7 +269,7 @@ class Moove_Activity_Database_Model {
 		global $wpdb;
 		$post_type = is_array( $post_type ) ? implode( ',', array_map( 'sanitize_key', $post_type ) ) : sanitize_key( $post_type );
 		$cache_key = md5( $post_type );
-		$response  = wp_cache_get( 'uat_get_all_logs_' . $cache_key, 'user-activity-tracking-and-log' );
+		$response  = Moove_UAT_Cache::get( 'uat_get_all_logs_' . $cache_key );
 		if ( ! $response ) :
 			$query = $wpdb->prepare( "SELECT DISTINCT `post_id` FROM {$wpdb->prefix}moove_activity_log uat_log WHERE `post_type` = %s", $post_type );
 
@@ -192,7 +277,7 @@ class Moove_Activity_Database_Model {
 				$query, // phpcs:ignore
 				ARRAY_A
 			); // db call ok; no-cache ok.
-			wp_cache_set( 'uat_get_all_logs_' . $cache_key, $response, 'user-activity-tracking-and-log' );
+			Moove_UAT_Cache::set( 'uat_get_all_logs_' . $cache_key, $response );
 		endif;
 		return $response;
 	}
@@ -258,29 +343,29 @@ class Moove_Activity_Database_Model {
 		endif;
 		$where       = '';
 		$cache_key   = 'uat_' . $key . $value . $limit;
-		$cache_value = wp_cache_get( $cache_key, 'user-activity-tracking-and-log' );
+		$cache_value = Moove_UAT_Cache::get( $cache_key );
 		if ( ! $cache_value ) :
 			if ( $key && $value ) :
 				if ( $limit && intval( $limit ) ) :
 					$result = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE `$key` = %s ORDER BY `visit_date` DESC LIMIT %d, %d", $value, 1, $limit ) ); // phpcs:ignore
-					wp_cache_set( $cache_key, $result, 'user-activity-tracking-and-log' );
+					Moove_UAT_Cache::set( $cache_key, $result );
 					return $result;
 				else :
 					$result = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE `$key` = %s", $value ) ); //phpcs:ignore
 
-					wp_cache_set( $cache_key, $result, 'user-activity-tracking-and-log' );
+					Moove_UAT_Cache::set( $cache_key, $result );
 					return $result;
 				endif;
 			else :
 				if ( $limit && intval( $limit ) ) :
 					$result = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE %s = %s ORDER BY `visit_date` DESC LIMIT %d, %d", '1', '1', 1, $limit ) ); // phpcs:ignore
 
-					wp_cache_set( $cache_key, $result, 'user-activity-tracking-and-log' );
+					Moove_UAT_Cache::set( $cache_key, $result );
 					return $result;
 				else :
 					$result = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}moove_activity_log WHERE %s = %s", '1', '1' ) ); // phpcs:ignore
 
-					wp_cache_set( $cache_key, $result, 'user-activity-tracking-and-log' );
+					Moove_UAT_Cache::set( $cache_key, $result );
 					return $result;
 				endif;
 			endif;
@@ -336,17 +421,23 @@ class Moove_Activity_Database_Model {
 	}
 
 	/**
-	 * Insert data
+	 * Insert a log row.
+	 *
+	 * Returns the new row ID (int) on success, 0 on failure. Historically
+	 * this returned a `wp_json_encode( [ 'id' => N ] )` envelope, which
+	 * every caller then had to unwrap — that legacy shape caused the
+	 * v4.2.3 Visit Duration regression (double-encoded JSON → intval() = 0
+	 * on the unload endpoint). Callers now get a plain int; the AJAX
+	 * handler still defensively decodes the old shape in case a
+	 * third-party filter hands one back.
 	 *
 	 * @param array $data Data to insert.
+	 * @return int Inserted row ID, or 0 on failure.
 	 */
 	public static function insert( $data ) {
-		global $wpdb;		
-		$log_id 	= $wpdb->insert( self::uat_table(), $data ); // phpcs:ignore
-		$response = array(
-			'id'   => $wpdb->insert_id
-		);
-		return wp_json_encode( $response );
+		global $wpdb;
+		$ok = $wpdb->insert( self::uat_table(), $data ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		return $ok ? (int) $wpdb->insert_id : 0;
 	}
 
 	/**
@@ -428,4 +519,7 @@ class Moove_Activity_Database_Model {
 		return strtotime( $date . ' GMT' );
 	}
 }
-new Moove_Activity_Database_Model();
+// Schema setup runs on activation now (see moove_activity_activate()).
+// Callers that need this class instantiate it directly; we no longer
+// fire the constructor (and its option-gated migration checks) on every
+// request just because the file was required.

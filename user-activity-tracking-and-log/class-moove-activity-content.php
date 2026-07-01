@@ -27,6 +27,49 @@ class Moove_Activity_Content {
 	}
 
 	/**
+	 * Safely decode a value stored in the `ma_data` post meta.
+	 *
+	 * Historically the plugin used PHP's serialize() / unserialize() for
+	 * this meta, which is a PHP Object Injection sink. New writes use JSON
+	 * (encode_ma_data()). This reader tries JSON first and only falls back
+	 * to a hardened unserialize() with `allowed_classes => false` so legacy
+	 * rows still work without exposing gadget chains.
+	 *
+	 * @param mixed $raw Value read from get_post_meta().
+	 * @return array
+	 */
+	public static function decode_ma_data( $raw ) {
+		if ( is_array( $raw ) ) {
+			return $raw;
+		}
+		if ( ! is_string( $raw ) || '' === $raw ) {
+			return array();
+		}
+
+		$decoded = json_decode( $raw, true );
+		if ( is_array( $decoded ) ) {
+			return $decoded;
+		}
+
+		// Legacy serialized payload — reject any embedded objects.
+		$legacy = @unserialize( $raw, array( 'allowed_classes' => false ) ); // phpcs:ignore
+		return is_array( $legacy ) ? $legacy : array();
+	}
+
+	/**
+	 * Encode the activity data array for storage in post meta. JSON is
+	 * safe to round-trip through update_post_meta() (it gets stored as-is
+	 * because it has no leading 'a:' / 'O:' marker that triggers WP's
+	 * maybe_serialize()).
+	 *
+	 * @param array $data Activity data array.
+	 * @return string
+	 */
+	public static function encode_ma_data( $data ) {
+		return (string) wp_json_encode( is_array( $data ) ? $data : array() );
+	}
+
+	/**
 	 * Returns the site activation key
 	 *
 	 * @param string $option_key Option key.
@@ -59,6 +102,28 @@ class Moove_Activity_Content {
 	 * @param string $action Can be enabled or delete.
 	 */
 	public static function moove_save_post( $post_id, $action = false ) {
+
+		// Skip the noisy auto/programmatic save paths.
+		if ( ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) || wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+
+		// Only honour the campaign mutations when the request was made by
+		// a user who can edit this post AND carried a valid editor nonce.
+		// `$action === 'enable'` is reserved for internal callers (e.g.
+		// moove_clear_logs()) so we let those through.
+		$is_internal_call = ( 'enable' === $action );
+		$has_campaign_intent = isset( $_POST['ma-delete-campaign'] ) || isset( $_POST['ma-trigger-campaign'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+		if ( ! $is_internal_call && $has_campaign_intent ) {
+			$nonce = isset( $_POST['_uat_ma_nonce'] ) ? sanitize_key( wp_unslash( $_POST['_uat_ma_nonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			if ( ! $nonce || ! wp_verify_nonce( $nonce, 'uat_ma_post_meta_' . (int) $post_id ) ) {
+				return;
+			}
+			if ( ! current_user_can( 'edit_post', (int) $post_id ) ) {
+				return;
+			}
+		}
 
 		if ( isset( $post_id ) ) :
 			$pid = $post_id;
@@ -99,8 +164,7 @@ class Moove_Activity_Content {
 		$_post_meta = isset( $_post_meta[0] ) ? $_post_meta : array( 0 => '' );
 		if ( isset( $_post_meta[0] ) ) :
 			$_ma_data_option = $_post_meta[0];
-			$ma_data         = unserialize( $_ma_data_option ); // phpcs:ignore
-			$ma_data 				 = $ma_data && is_array( $ma_data ) ? $ma_data : [];
+			$ma_data         = self::decode_ma_data( $_ma_data_option );
 			// If we have the campaign ID set already, don't do anything.
 			if ( isset( $ma_data['campaign_id'] ) && '' !== $ma_data['campaign_id'] ) :
 				return;
@@ -115,12 +179,12 @@ class Moove_Activity_Content {
 			$settings 	= apply_filters( 'moove_uat_filter_plugin_settings', $settings );
 
 			if ( isset( $settings[ $post_type ] ) && intval( $settings[ $post_type ] ) !== 0 ) :
-				update_post_meta( $pid, 'ma_data', serialize( $ma_data ) ); // phpcs:ignore
+				update_post_meta( $pid, 'ma_data', self::encode_ma_data( $ma_data ) );
 				update_post_meta( $pid, 'ma_disabled', '0' );
 			endif;
 
 			if ( intval( $trigger_campaign ) === 1 ) :
-				update_post_meta( $pid, 'ma_data', serialize( $ma_data ) ); // phpcs:ignore
+				update_post_meta( $pid, 'ma_data', self::encode_ma_data( $ma_data ) );
 				update_post_meta( $pid, 'ma_disabled', '0' );
 			endif;
 		endif;
@@ -161,7 +225,7 @@ class Moove_Activity_Content {
 				$_post_meta = get_post_meta( $post_id, 'ma_data' );
 				if ( isset( $_post_meta[0] ) ) :
 					$_ma_data_option = $_post_meta[0];
-					$ma_data         = unserialize( $_ma_data_option ); // phpcs:ignore
+					$ma_data         = self::decode_ma_data( $_ma_data_option );
 				endif;
 				if ( isset( $ma_data['campaign_id'] ) ) :
 					$activity = $uat_db_controller->get_log( 'post_id', $post_id, 5 );
@@ -199,7 +263,8 @@ class Moove_Activity_Content {
 			'moove.admin.activity-metabox',
 			array(
 				'activity'     => $ma_data, // phpcs:ignore
-				'global_setup' => $global_setup // phpcs:ignore
+				'global_setup' => $global_setup, // phpcs:ignore
+				'post_id'      => isset( $post_id ) ? (int) $post_id : 0,
 			)
 		);
 

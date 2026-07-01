@@ -209,7 +209,10 @@ class Moove_UAT_License_Manager {
 	 */
 	public function install_plugin( $plugin_token ) {
 		include_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		wp_cache_flush();
+		// Note: a wp_cache_flush() used to live here. It wiped the entire
+		// site-wide object cache on every plugin install — unnecessary, as
+		// WordPress core invalidates the plugin list internally after
+		// Plugin_Upgrader::install() completes.
 		$upgrader  = new Plugin_Upgrader();
 		$installed = $upgrader->install( $plugin_token );
 
@@ -223,7 +226,9 @@ class Moove_UAT_License_Manager {
 	 */
 	public function upgrade_plugin( $plugin_slug ) {
 		include_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		wp_cache_flush();
+		// Note: a wp_cache_flush() used to live here. Removed for the same
+		// reason as in install_plugin() — it wiped the entire site cache
+		// unnecessarily on every plugin upgrade.
 
 		$upgrader = new Plugin_Upgrader();
 		$upgraded = $upgrader->upgrade( $plugin_slug );

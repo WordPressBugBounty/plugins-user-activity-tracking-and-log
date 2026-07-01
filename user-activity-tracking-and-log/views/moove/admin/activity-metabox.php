@@ -12,9 +12,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 } // Exit if accessed directly
 
 $ma_data = $data['activity'];
+$uat_meta_post_id = isset( $data['post_id'] ) ? (int) $data['post_id'] : 0;
 
 ?>
 <div class="ma-metabox-wrapper">
+	<?php
+	if ( $uat_meta_post_id > 0 ) {
+		wp_nonce_field( 'uat_ma_post_meta_' . $uat_meta_post_id, '_uat_ma_nonce' );
+	}
+	?>
 	<span class="ma-global-protection">
 		<strong><?php esc_html_e( 'Global settings', 'user-activity-tracking-and-log' ); ?>:</strong>
 		<i><?php echo esc_attr( ( 0 !== intval( $data['global_setup'] ) ) ? __( 'Enabled', 'user-activity-tracking-and-log' ) : __( 'Disabled', 'user-activity-tracking-and-log' ) ); ?></i>
