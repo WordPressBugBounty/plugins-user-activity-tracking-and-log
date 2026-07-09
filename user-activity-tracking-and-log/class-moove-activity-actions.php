@@ -452,6 +452,16 @@ class Moove_Activity_Actions {
 			)
 		);
 
+		/**
+		 * Filter the sidebar tab entries so add-ons can inject additional
+		 * tabs (e.g. the premium Combined Log). Each entry must match the
+		 * $tab_data shape (name, class, slug, sm; optional icon).
+		 *
+		 * @param array  $tab_data   Existing tab definitions.
+		 * @param string $active_tab Currently active tab slug.
+		 */
+		$tab_data = apply_filters( 'uat_activity_sidebar_tabs', $tab_data, $active_tab );
+
 		foreach ( $tab_data as $tab ) :
 			ob_start();
 			?>

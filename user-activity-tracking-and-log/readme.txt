@@ -1,7 +1,7 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.3.0
+Stable tag: 4.3.1
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
 Tested up to: 7.0
@@ -144,24 +144,15 @@ We have a [dedicated support forum](https://support.mooveagency.com/forum/user-a
 
 == Changelog ==
 
-= 4.3.0: 25 June 2026 =
-* Performance: schema creation and index migration moved off every request to plugin activation
-* Performance: legacy post-meta importer now runs in 200-post WP-Cron batches instead of scanning the entire site on first admin load
-* Performance: per-CPT retention cleanup moved to a daily WP-Cron job, processed in 1000-row batches (capped via `uat_retention_batch_cap` filter, default 50000)
-* Performance: `moove_clear_logs`, settings-save and `moove_activity_check_settings` rewritten from `posts_per_page => -1` to paged 500-row loops with `fields=ids` + `no_found_rows`
-* Performance: CPT "Export All Logs" rerouted through the keyset-paginated streaming exporter (no longer loads the full result set into memory)
-* Performance: geo IP lookup no longer blocks page-view AJAX; cache misses are resolved asynchronously via WP-Cron and the synchronous fallback timeout dropped from 30s to 2s
-* Performance: replaced site-wide `wp_cache_flush()` with a versioned plugin-scoped cache namespace (constant-time invalidation, no impact on other plugins' cached data)
-* Security: `ma_data` post meta migrated from PHP `serialize()` / `unserialize()` to JSON; legacy rows still readable via a hardened back-compat reader (`allowed_classes => false`) — closes a PHP Object Injection sink
-* Security: nopriv tracking endpoints hardened with cache-safe defences (Origin / Referer check + per-IP rate limit + per-log session token verified with `hash_equals`); fixes IDOR on the unload handler. No nonces added to nopriv AJAX so page-cache hosts (WP Engine, Kinsta, etc.) continue tracking correctly
-* Security: `current_user_can()` capability checks added to Settings and Licence view POST handlers
-* Security: `save_post` mutations on the activity metabox now require a per-post nonce + edit capability
-* Security: DataTables LIKE filter switched from the private `_real_escape` + string concatenation to `$wpdb->esc_like()` + `$wpdb->prepare()` with a whitelisted column identifier
-* Security: CSV export sanitises formula-prefix characters (`=`, `+`, `-`, `@`, tab, CR) to defeat spreadsheet formula injection
-* Security: IP detection no longer trusts `HTTP_CF_CONNECTING_IP` by default; opt in via `uat_trust_cloudflare_headers` filter. `X-Forwarded-For` now uses the left-most token and is validated with `FILTER_VALIDATE_IP`
-* Security: linkify fallback output escapes untrusted user data (display_name, IP, user_login, user_email columns) when no integration is hooked
-* Lifecycle: added `uninstall.php` — drops the activity log table, deletes plugin options/user-meta, clears all cron hooks on plugin delete
-* Lifecycle: deactivation hook clears all scheduled plugin cron events and logs exceptions to `error_log` instead of echoing them in the admin
+= 4.3.1: 9 July 2026 =
+* Security: added `current_user_can()` capability check to AJAX handlers so they no longer rely on the nonce checks alone.
+
+= 4.3.0: 1 July 2026 =
+* Fixed: Visit Duration
+* Performance improvements
+* Security enhancements
+* Activity Log improvements
+* Admin improvements
 
 = 4.2.3: 17 June 2026 =
 * Performance: use navigator.sendBeacon for pageview tracking when time-spent tracking is disabled (non-blocking, no connection held open)

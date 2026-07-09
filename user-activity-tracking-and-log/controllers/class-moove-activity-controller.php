@@ -292,9 +292,16 @@ class Moove_Activity_Controller {
 			wp_raise_memory_limit( 'admin' );
 		}
 
-		$dt_nonce = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
+		$dt_nonce      = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
+		$settings_perm = apply_filters( 'uat_log_settings_capability', 'manage_options' );
 
-		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) ) :
+		// Nonce-only access to the raw log data was inconsistent with the
+		// rest of the AJAX handlers in this file (which pair the nonce
+		// check with a capability check). Enforce the same capability here
+		// as a defence-in-depth measure — the nonce is only rendered inside
+		// admin views gated by `uat_activity_log_capability`, but we should
+		// not rely on that as the only authorisation gate.
+		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) || ! current_user_can( $settings_perm ) ) :
 			echo wp_json_encode(
 				array(
 					'draw'            => 1,
@@ -647,13 +654,16 @@ class Moove_Activity_Controller {
 	 * the total record count so the client can render progress.
 	 */
 	public static function uat_activity_export_dt_logs_paginated() {
-		$dt_nonce = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
-		$type     = isset( $_GET['type'] ) ? sanitize_text_field( wp_unslash( $_GET['type'] ) ) : 'all';
-		$last_id  = isset( $_GET['last_id'] ) ? max( 0, intval( $_GET['last_id'] ) ) : 0;
-		$limit    = isset( $_GET['limit'] ) ? intval( $_GET['limit'] ) : 5000;
-		$limit    = max( 1, min( 20000, $limit ) );
+		$dt_nonce      = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
+		$type          = isset( $_GET['type'] ) ? sanitize_text_field( wp_unslash( $_GET['type'] ) ) : 'all';
+		$last_id       = isset( $_GET['last_id'] ) ? max( 0, intval( $_GET['last_id'] ) ) : 0;
+		$limit         = isset( $_GET['limit'] ) ? intval( $_GET['limit'] ) : 5000;
+		$limit         = max( 1, min( 20000, $limit ) );
+		$settings_perm = apply_filters( 'uat_log_settings_capability', 'manage_options' );
 
-		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) ) {
+		// Defence-in-depth: pair the nonce with the same capability check
+		// used by the other AJAX handlers in this file (settings / delete).
+		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) || ! current_user_can( $settings_perm ) ) {
 			echo wp_json_encode(
 				array(
 					'success'      => false,
@@ -687,10 +697,13 @@ class Moove_Activity_Controller {
 	 * Data Tables AJAX log
 	 */
 	public static function uat_activity_export_dt_logs() {
-		$dt_nonce = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
-		$type     = isset( $_GET['type'] ) ? sanitize_text_field( wp_unslash( $_GET['type'] ) ) : 'all';
+		$dt_nonce      = isset( $_GET['dt_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['dt_nonce'] ) ) : '';
+		$type          = isset( $_GET['type'] ) ? sanitize_text_field( wp_unslash( $_GET['type'] ) ) : 'all';
+		$settings_perm = apply_filters( 'uat_log_settings_capability', 'manage_options' );
 
-		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) ) :
+		// Defence-in-depth: pair the nonce with the same capability check
+		// used by the other AJAX handlers in this file (settings / delete).
+		if ( ! wp_verify_nonce( $dt_nonce, 'moove_uat_dt_log_nonce_field' ) || ! current_user_can( $settings_perm ) ) :
 			echo wp_json_encode(
 				array(
 					'draw'            => 1,
