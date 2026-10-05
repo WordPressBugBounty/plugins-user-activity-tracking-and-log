@@ -129,7 +129,10 @@ class Moove_Activity_Database_Model {
 	 * when the index is actually missing.
 	 */
 	public static function ensure_activity_log_indexes() {
-		if ( get_option( 'uat_db_indexes_v1' ) ) {
+		// Version-gated rather than a single flag: adding an index to the
+		// list below only needs the option name bumped. Re-running is safe —
+		// each ALTER is skipped when the index is already present.
+		if ( get_option( 'uat_db_indexes_v2' ) ) {
 			return;
 		}
 
@@ -159,6 +162,11 @@ class Moove_Activity_Database_Model {
 			// WHERE uat_log.post_type IN (...) — always present in the
 			// default query. TINYTEXT requires a prefix length.
 			'uat_post_type'  => '`post_type`(20)',
+			// WHERE user_ip = ... — the geolocation backfill and the
+			// per-user delete both look rows up by address. 64 chars covers
+			// an IPv6 address and the md5 hash written when GDPR
+			// anonymisation is on.
+			'uat_user_ip'    => '`user_ip`(64)',
 		);
 
 		foreach ( $indexes as $name => $col_expr ) {
@@ -170,7 +178,7 @@ class Moove_Activity_Database_Model {
 			// @codingStandardsIgnoreEnd
 		}
 
-		update_option( 'uat_db_indexes_v1', true, false );
+		update_option( 'uat_db_indexes_v2', true, false );
 	}
 
 	public static function delete_abandoned_logs() {
@@ -212,7 +220,7 @@ class Moove_Activity_Database_Model {
 	 */
 	public static function get_all_logs( $post_types ) {
 		global $wpdb;
-		$post_types = is_array( $post_types ) ? array_map( 'sanitize_key', $post_types ) : array();
+		$post_types = is_array( $post_types ) ? array_values( array_map( 'sanitize_key', $post_types ) ) : array();
 		$cache_key  = md5( implode( ',', $post_types ) );
 		$response   = Moove_UAT_Cache::get( 'uat_get_all_logs_' . $cache_key );
 		if ( ! $response ) :

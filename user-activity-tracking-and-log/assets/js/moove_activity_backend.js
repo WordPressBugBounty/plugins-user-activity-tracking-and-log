@@ -531,6 +531,22 @@
 			}
     }
 
+    /**
+     * Fill a post accordion body.
+     *
+     * Extensions may take over by defining `window.uat_cpt_log_loader`; it
+     * receives the same arguments and returns true when it has handled the
+     * load, or false to fall through to the built-in activity log table.
+     */
+    function uat_cpt_load_log_table( log_id, element, action ) {
+    	if ( typeof window.uat_cpt_log_loader === 'function' ) {
+    		if ( window.uat_cpt_log_loader( log_id, element, action ) ) {
+    			return;
+    		}
+    	}
+    	uat_cpt_get_log_table( log_id, element, action );
+    }
+
     function uat_cpt_get_log_table( log_id, element, action ) {
 				if ( ! element.hasClass('uat_cpt-log-loaded') ) {
 					element.addClass('uat_cpt-log-loaded')
@@ -679,7 +695,7 @@
 	    	$(window).trigger('resize');
 	    	if ( log_id && ! $(this).hasClass('uat_cpt-log-loaded') ) {
 	    		if ( item.attr('data-type') === 'activity_log' ) {
-	    			uat_cpt_get_log_table( log_id, item, 'get' );
+	    			uat_cpt_load_log_table( log_id, item, 'get' );
 	    		}
 	    	}
 	    	if ( $(this).is('.active') ) {
@@ -694,7 +710,7 @@
 	      	var log_id = item.attr('data-id');
 	      	if ( log_id && ! item.hasClass('uat_cpt-log-loaded') ) {
 		    		if ( item.attr('data-type') === 'activity_log' ) {
-		    			uat_cpt_get_log_table( log_id, item, 'get' );
+		    			uat_cpt_load_log_table( log_id, item, 'get' );
 		    		}
 		    	}
 	      }

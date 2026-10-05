@@ -4,7 +4,7 @@
  *  Plugin Name: User Activity Tracking and Log
  *  Plugin URI: http://www.mooveagency.com
  *  Description: This plugin gives you the ability to track user activity on your website.
- *  Version: 4.3.1
+ *  Version: 4.3.2
  *  Author: Moove Agency
  *  Author URI: http://www.mooveagency.com
  *  License: GPLv2
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Exit if accessed directly.
 }
 
-define( 'MOOVE_UAT_VERSION', '4.3.1' );
+define( 'MOOVE_UAT_VERSION', '4.3.2' );
 
 if ( ! defined( 'MOOVE_SHOP_URL' ) ) :
 	define( 'MOOVE_SHOP_URL', 'https://shop.mooveagency.com' );
@@ -27,24 +27,117 @@ register_activation_hook( __FILE__, 'moove_activity_activate' );
 register_deactivation_hook( __FILE__, 'moove_activity_deactivate' );
 
 /**
- * Set options page for the plugin
+ * Set options page for the plugin.
+ *
+ * Populates `moove_post_act` with an entry per public post type.
+ *
+ * This used to bail out entirely whenever the option already existed
+ * (`if ( ! $settings )`), which meant post types registered *after* the
+ * plugin was first configured never got an entry. The tracker gates on
+ * `isset( $settings[ $post_type ] )`, so those post types were silently
+ * never tracked — the exact failure mode hit by every LMS/e-commerce
+ * plugin installed after this one (Sensei LMS registering course /
+ * lesson / quiz being the common case).
+ *
+ * The routine is now additive: existing choices are never overwritten,
+ * missing post types are appended.
  */
 function moove_set_options_values() {
 	$settings   = get_option( 'moove_post_act' );
 	$post_types = get_post_types( array( 'public' => true ) );
 	unset( $post_types['attachment'] );
-	if ( ! $settings ) :
-		foreach ( $post_types as $post_type ) :
-			if ( ( isset( $settings[ $post_type ] ) && 1 !== $settings[ $post_type ] ) || ! isset( $settings[ $post_type ] ) ) :
-				$settings[ $post_type ] = 1;
-			endif;
-			if ( ( isset( $settings[ $post_type . '_transient' ] ) && 1 !== $settings[ $post_type . '_transient' ] ) || ! isset( $settings[ $post_type . '_transient' ] ) ) :
-				$settings[ $post_type . '_transient' ] = apply_filters( 'uat_log_retention_default', 30 );				
-			endif;
-		endforeach;
+
+	$is_first_run = ! $settings || ! is_array( $settings );
+	$settings     = is_array( $settings ) ? $settings : array();
+	$added        = array();
+
+	foreach ( $post_types as $post_type ) :
+		// Never clobber an explicit admin choice.
+		if ( isset( $settings[ $post_type ] ) ) :
+			continue;
+		endif;
+
+		/**
+		 * Default tracking status for a post type the plugin has not seen
+		 * before. Defaults to enabled, matching the historical first-run
+		 * behaviour. Integrations use this to opt sensitive post types out
+		 * (e.g. Sensei's private messages).
+		 *
+		 * @param int    $status    1 to track, 0 to leave disabled.
+		 * @param string $post_type Post type slug.
+		 */
+		$settings[ $post_type ] = intval( apply_filters( 'uat_new_post_type_default_status', 1, $post_type ) );
+
+		if ( ! isset( $settings[ $post_type . '_transient' ] ) ) :
+			$settings[ $post_type . '_transient' ] = apply_filters( 'uat_log_retention_default', 30 );
+		endif;
+
+		$added[] = $post_type;
+	endforeach;
+
+	if ( $is_first_run || ! empty( $added ) ) :
 		$settings = apply_filters( 'moove_post_act_before_save', $settings );
 		update_option( 'moove_post_act', $settings );
 	endif;
+
+	// Surface newly detected post types to the admin rather than changing
+	// what gets logged behind their back.
+	if ( ! $is_first_run && ! empty( $added ) ) :
+		$pending = get_option( 'uat_new_post_types_notice' );
+		$pending = is_array( $pending ) ? $pending : array();
+		update_option( 'uat_new_post_types_notice', array_values( array_unique( array_merge( $pending, $added ) ) ), false );
+	endif;
+}
+
+add_action( 'admin_init', 'moove_uat_sync_post_type_settings' );
+/**
+ * Keep the post-type settings in sync as plugins are added or removed.
+ *
+ * Cheap: one autoloaded option read plus an in-memory diff. It only
+ * writes when a genuinely new post type shows up.
+ */
+function moove_uat_sync_post_type_settings() {
+	moove_set_options_values();
+}
+
+add_action( 'admin_notices', 'moove_uat_new_post_types_notice' );
+/**
+ * Tell the admin when tracking has started for newly registered post
+ * types, and link them to the settings screen to change it.
+ */
+function moove_uat_new_post_types_notice() {
+	if ( ! current_user_can( apply_filters( 'uat_log_settings_capability', 'manage_options' ) ) ) {
+		return;
+	}
+
+	$pending = get_option( 'uat_new_post_types_notice' );
+	if ( ! is_array( $pending ) || empty( $pending ) ) {
+		return;
+	}
+
+	$labels = array();
+	foreach ( $pending as $post_type ) {
+		$object   = get_post_type_object( $post_type );
+		$labels[] = $object ? $object->label : $post_type;
+	}
+	?>
+	<div class="notice notice-info is-dismissible">
+		<p>
+			<strong><?php esc_html_e( 'User Activity Tracking and Log', 'user-activity-tracking-and-log' ); ?>:</strong>
+			<?php
+			printf(
+				/* translators: %s: comma separated list of post type labels. */
+				esc_html__( 'New content types were detected and added to your tracking settings: %s.', 'user-activity-tracking-and-log' ),
+				'<strong>' . esc_html( implode( ', ', $labels ) ) . '</strong>'
+			);
+			?>
+			<a href="<?php echo esc_url( admin_url( 'admin.php?page=moove-activity-log&tab=activity-settings&sm=settings' ) ); ?>">
+				<?php esc_html_e( 'Review tracking settings', 'user-activity-tracking-and-log' ); ?>
+			</a>
+		</p>
+	</div>
+	<?php
+	delete_option( 'uat_new_post_types_notice' );
 }
 
 /**
@@ -184,6 +277,14 @@ function uat_activity_load_libs() {
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-array-order.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-activity-database-model.php';
 	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-cron.php';
+
+	/**
+	 * Third-party compatibility. Each file self-guards on its plugin
+	 * being active, so loading them unconditionally is safe. These cover
+	 * data hygiene only — feature-level integrations live in the
+	 * premium add-on.
+	 */
+	require_once dirname( __FILE__ ) . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR . 'class-moove-uat-sensei.php';
 
 	// Register background work (cron handlers + self-healing schedules).
 	if ( class_exists( 'Moove_UAT_Cron' ) ) {

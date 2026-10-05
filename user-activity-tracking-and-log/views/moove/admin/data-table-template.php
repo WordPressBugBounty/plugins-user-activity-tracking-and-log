@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 		<tr>
 			<th><?php esc_html_e( 'Date / Time', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Post Title', 'user-activity-tracking-and-log' ); ?></th>
-			<th><?php esc_html_e( 'Post Type', 'user-activity-tracking-and-log' ); ?></th>
+			<th><?php esc_html_e( 'Type / Trigger', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'User Email', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Username', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Display Name', 'user-activity-tracking-and-log' ); ?></th>
@@ -51,7 +51,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 		<tr>
 			<th><?php esc_html_e( 'Date / Time', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Post Title', 'user-activity-tracking-and-log' ); ?></th>
-			<th><?php esc_html_e( 'Post Type', 'user-activity-tracking-and-log' ); ?></th>
+			<th><?php esc_html_e( 'Type / Trigger', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'User Email', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Username', 'user-activity-tracking-and-log' ); ?></th>
 			<th><?php esc_html_e( 'Display Name', 'user-activity-tracking-and-log' ); ?></th>

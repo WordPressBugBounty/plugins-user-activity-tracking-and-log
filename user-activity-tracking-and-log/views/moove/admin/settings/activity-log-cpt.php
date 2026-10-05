@@ -36,6 +36,15 @@ if ( $active_tab && current_user_can( $activity_perm ) ) :
 				<!-- .uat-responsive-table -->
 			</div>
 			<!-- #uat-table-section-html -->
+			<?php
+			/**
+			 * Fires before the per-post accordion. Extensions use it to render
+			 * controls that apply to every log table on this screen.
+			 *
+			 * @param string $active_tab Post type slug of the current tab.
+			 */
+			do_action( 'uat_activity_log_cpt_before_accordion', $active_tab );
+			?>
 			<div class="moove-accordion-cnt uat-ajax-filled-accordion uat-dt-log" data-adminajax="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>">
 				<div class="moove-accordion">
 					<div class="moove-accordion-section">
@@ -45,16 +54,37 @@ if ( $active_tab && current_user_can( $activity_perm ) ) :
 							echo '<h2>' . esc_attr( ucfirst( $ptlog ) ) . '</h2>';
 							endif;
 
-							$posts_from_cpt = $uat_db_controller->get_post_type_logs( $active_tab );
+							/**
+							 * Filters the posts listed in the accordion.
+							 *
+							 * Each entry is an array with at least a `post_id` key.
+							 * Extensions may append posts that other log sources
+							 * know about but the activity log does not.
+							 *
+							 * @param array  $posts_from_cpt Posts with activity log rows.
+							 * @param string $active_tab     Post type slug of the current tab.
+							 */
+							$posts_from_cpt = apply_filters( 'uat_activity_log_cpt_posts', $uat_db_controller->get_post_type_logs( $active_tab ), $active_tab );
 							$sorted_posts   = array();
 						if ( $posts_from_cpt && is_array( $posts_from_cpt ) ) :
 							foreach ( $posts_from_cpt as $_data ) :
 								$_post_id = isset( $_data['post_id'] ) ? $_data['post_id'] : '';
 								$_title   = get_the_title( $_post_id );
 								if ( $_title ) :
+									/**
+									 * Filters extra HTML attributes for an accordion item.
+									 *
+									 * Implementations are responsible for escaping their
+									 * own values.
+									 *
+									 * @param string $atts       Attribute string, empty by default.
+									 * @param int    $_post_id   Post ID of this item.
+									 * @param string $active_tab Post type slug of the current tab.
+									 */
+									$_item_atts = apply_filters( 'uat_activity_log_cpt_item_atts', '', $_post_id, $active_tab );
 									ob_start();
 									?>
-											<a class="moove-accordion-section-title" data-type="activity_log" data-id="<?php echo esc_attr( $_post_id ); ?>" href="#moove-accordion-<?php echo intval( $_post_id ); ?>">
+											<a class="moove-accordion-section-title" data-type="activity_log" data-id="<?php echo esc_attr( $_post_id ); ?>" <?php echo $_item_atts; // phpcs:ignore WordPress.Security.EscapeOutput -- escaped by the filter implementation. ?> href="#moove-accordion-<?php echo intval( $_post_id ); ?>">
 											<?php echo esc_attr( $_title ); ?>
 											</a>
 											<div id="moove-accordion-<?php echo intval( $_post_id ); ?>" class="moove-accordion-section-content" data-permalink="<?php echo get_permalink( $_post_id ); ?>">

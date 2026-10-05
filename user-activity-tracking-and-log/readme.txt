@@ -1,10 +1,10 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.3.1
+Stable tag: 4.3.2
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.4
 License: GPLv3
 
@@ -143,6 +143,13 @@ We have a [dedicated support forum](https://support.mooveagency.com/forum/user-a
 13. User Activity Tracking and Log - Advanced Settings [Premium]
 
 == Changelog ==
+
+= 4.3.3: 5 October 2026 =
+* Minor fixes
+
+= 4.3.2: 7 August 2026 =
+* Geolocation improved
+* Minor fixes
 
 = 4.3.1: 9 July 2026 =
 * Security: added `current_user_can()` capability check to AJAX handlers so they no longer rely on the nonce checks alone.

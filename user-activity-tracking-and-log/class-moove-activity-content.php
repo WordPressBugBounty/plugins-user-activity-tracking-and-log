@@ -463,7 +463,7 @@ class Moove_Activity_Content {
 	public static function uat_get_alertbox( $type, $response, $uat_key ) {
 		if ( 'error' === $type ) :
 			$messages = isset( $response['message'] ) && is_array( $response['message'] ) ? implode( '</p><p>', $response['message'] ) : '';
-			if ( 'inactive' === $response['type'] ) :
+			if ( isset( $response['type'] ) && 'inactive' === $response['type'] ) :
 				$uat_default_content = new Moove_Activity_Content();
 				$option_key          = $uat_default_content->moove_uat_get_key_name();
 				$uat_key             = $uat_default_content->uat_get_activation_key( $option_key );

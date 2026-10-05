@@ -54,7 +54,7 @@ class Moove_UAT_License_Manager {
 				'key'     => $license_key,
 				'message' => array(
 					'We cannot activate the licence due to errors with the setup of your website and/or your hosting.',
-					'<strong>' . ( method_exists( $error, 'get_error_messages' ) ? implode( '<br />', $error->get_error_messages() ) : '' ) . '</strong>',
+					'<strong>' . ( is_object( $error ) && method_exists( $error, 'get_error_messages' ) ? implode( '<br />', $error->get_error_messages() ) : '' ) . '</strong>',
 					'Once you resolve the issues, you will be able to activate the licence. You can also <a href="https://support.mooveagency.com/forum/user-activity-tracking-and-log/" target="_blank" class="error_admin_link">contact our support</a> if you need any additional assistance.',
 				)
 			);
@@ -69,7 +69,7 @@ class Moove_UAT_License_Manager {
 					'key'     => $license_key,
 					'message' => array(
 						'We cannot activate the licence due to errors with the setup of your website and/or your hosting.',
-						'<strong>' . ( method_exists( $error, 'get_error_messages' ) ? implode( '<br />', $error->get_error_messages() ) : '' ) . '</strong>',
+						'<strong>' . ( is_object( $error ) && method_exists( $error, 'get_error_messages' ) ? implode( '<br />', $error->get_error_messages() ) : '' ) . '</strong>',
 						'Once you resolve the issues, you will be able to activate the licence. You can also <a href="https://support.mooveagency.com/forum/user-activity-tracking-and-log/" target="_blank" class="error_admin_link">contact our support</a> if you need any additional assistance.',
 					)
 				);

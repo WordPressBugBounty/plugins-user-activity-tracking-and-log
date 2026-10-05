@@ -1118,10 +1118,11 @@ class Moove_Activity_Controller {
 				$details         = $loc_enabled ? $uat_shrotcodes->get_location_details( $ip_uf ) : false;
 				$city            = $loc_enabled && isset( $details->city ) ? $details->city : '';
 
-				// On a geo cache miss, kick the lookup to the background
-				// so the front-end never waits on an external HTTP call.
-				// Subsequent page-views from the same IP will hit the
-				// warmed transient.
+				// get_location_details() has already tried the cache, the
+				// log and the providers by this point, so an empty city
+				// means every provider was down, in cooldown, or switched
+				// off. Queue a background retry as the fallback — by the
+				// time it runs the cooldown may have lifted.
 				if ( $loc_enabled && '' === $city && $ip_uf && class_exists( 'Moove_UAT_Cron' ) ) {
 					if ( ! wp_next_scheduled( Moove_UAT_Cron::HOOK_RESOLVE_GEO, array( $ip_uf, 0 ) ) ) {
 						wp_schedule_single_event( time() + 5, Moove_UAT_Cron::HOOK_RESOLVE_GEO, array( $ip_uf, 0 ) );

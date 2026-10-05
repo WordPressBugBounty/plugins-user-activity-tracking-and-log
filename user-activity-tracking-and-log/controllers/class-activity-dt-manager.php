@@ -401,7 +401,7 @@ class Activity_DT_Manager {
 		 * Output.
 		 */
 
-		$headers 		= array( 'Date / Time', 'Post Title', 'Post Type', 'User Email', 'Username', 'Display Name', 'Visit Duration', 'User Role', 'Location', 'IP Address', 'Referrer', 'Permalink', 'Full URL' );
+		$headers 		= array( 'Date / Time', 'Post Title', 'Type / Trigger', 'User Email', 'Username', 'Display Name', 'Visit Duration', 'User Role', 'Location', 'IP Address', 'Referrer', 'Permalink', 'Full URL' );
 		$headers_f 	= array_values( apply_filters('uat_csv_dt_header', array() ) );
 		$headers 		= array( array_merge( $headers, $headers_f ) );
 		
@@ -560,7 +560,7 @@ class Activity_DT_Manager {
 			}
 			$total = $wpdb->get_var( $sql_count ); // phpcs:ignore
 
-			$headers   = array( 'Date / Time', 'Post Title', 'Post Type', 'User Email', 'Username', 'Display Name', 'Visit Duration', 'User Role', 'Location', 'IP Address', 'Referrer', 'Permalink', 'Full URL' );
+			$headers   = array( 'Date / Time', 'Post Title', 'Type / Trigger', 'User Email', 'Username', 'Display Name', 'Visit Duration', 'User Role', 'Location', 'IP Address', 'Referrer', 'Permalink', 'Full URL' );
 			$headers_f = array_values( apply_filters( 'uat_csv_dt_header', array() ) );
 			$headers   = array( array_merge( $headers, $headers_f ) );
 

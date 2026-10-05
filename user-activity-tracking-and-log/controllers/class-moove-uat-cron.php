@@ -69,6 +69,10 @@ if ( ! class_exists( 'Moove_UAT_Cron' ) ) :
 			// Apply per-post-type retention. Batched so a multi-million
 			// row table doesn't hold table locks for minutes.
 			self::trim_retention_batched();
+
+			// Fill in locations we already know from another visit by the
+			// same IP. Purely local — no external lookups.
+			self::repair_missing_locations();
 		}
 
 		/**
@@ -220,17 +224,265 @@ if ( ! class_exists( 'Moove_UAT_Cron' ) ) :
 
 			$sc      = new Moove_Activity_Shortcodes();
 			$details = $sc->get_location_details( $ip, true );
+			$city    = ( $details && isset( $details->city ) ) ? (string) $details->city : '';
 
-			if ( $row > 0 && $details && isset( $details->city ) && $details->city ) {
+			if ( '' === $city ) {
+				return;
+			}
+
+			if ( $row > 0 ) {
 				global $wpdb;
 				$wpdb->update( // phpcs:ignore
 					$wpdb->prefix . 'moove_activity_log',
-					array( 'city' => (string) $details->city ),
+					array( 'city' => $city ),
 					array( 'id' => (int) $row ),
 					array( '%s' ),
 					array( '%d' )
 				);
 			}
+
+			// The row that triggered this lookup was written before the
+			// answer existed, so warming the transient alone leaves it at
+			// N/A forever — the visible symptom being a log where the same
+			// IP alternates between a city and N/A. Push the result onto
+			// every location-less row for this IP instead of just $row:
+			// the callers dedupe the cron event per IP (row 0), and the
+			// save_post and user-session trackers never pass a row at all.
+			//
+			// The log stores the *filtered* IP — md5() once the GDPR
+			// anonymisation option is on — so match on that, not on the raw
+			// address the lookup used.
+			$stored_ip = (string) apply_filters( 'moove_activity_tracking_ip_filter', $ip );
+			self::apply_city_to_ip( $stored_ip, $city );
+		}
+
+		/**
+		 * Tables carrying an IP + city pair that the backfill may repair.
+		 *
+		 * The core log is the only one this plugin owns; the add-on appends
+		 * its event-tracking and user-session logs. Names are validated
+		 * before they reach a query because the list is filterable.
+		 *
+		 * @return array Fully-prefixed, validated table names.
+		 */
+		protected static function geo_tables() {
+			global $wpdb;
+
+			static $resolved = null;
+			if ( null !== $resolved ) {
+				return $resolved;
+			}
+
+			$tables = (array) apply_filters(
+				'uat_geo_backfill_tables',
+				array( $wpdb->prefix . 'moove_activity_log' )
+			);
+
+			$resolved = array();
+			foreach ( $tables as $table ) {
+				if ( ! is_string( $table ) || ! preg_match( '/^[A-Za-z0-9_]+$/', $table ) ) {
+					continue;
+				}
+				if ( isset( $resolved[ $table ] ) ) {
+					continue;
+				}
+				// A registered table is not necessarily a created one: the
+				// add-on advertises its event and session logs whether or
+				// not those modules have ever run.
+				$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ); // phpcs:ignore
+				if ( $found ) {
+					$resolved[ $table ] = $table;
+				}
+			}
+
+			$resolved = array_values( $resolved );
+			return $resolved;
+		}
+
+		/**
+		 * The values a `city` column holds when the location is unknown.
+		 *
+		 * Not one value but four: the core tracker writes the literal
+		 * 'N/A' string, the event and session trackers write '', legacy
+		 * rows can be NULL, and a translated install writes the localised
+		 * 'N/A'. All of them render as N/A and all of them are repairable.
+		 *
+		 * @return array
+		 */
+		protected static function missing_city_values() {
+			$values = array( '', 'N/A', __( 'N/A', 'user-activity-tracking-and-log' ) );
+			$values = (array) apply_filters( 'uat_geo_missing_city_values', $values );
+			$values = array_values( array_unique( array_filter( $values, 'is_string' ) ) );
+
+			// A filter that empties the list would build an `IN ()` and
+			// take the query down with it.
+			return $values ? $values : array( '' );
+		}
+
+		/**
+		 * SQL fragment matching rows with no usable location, plus the
+		 * values to bind to it.
+		 *
+		 * @param bool $negate Match rows that DO have a location instead.
+		 * @return array { @type string $sql, @type array $values }
+		 */
+		protected static function missing_city_clause( $negate = false ) {
+			$values       = self::missing_city_values();
+			$placeholders = implode( ',', array_fill( 0, count( $values ), '%s' ) );
+
+			$sql = $negate
+				? "( `city` IS NOT NULL AND `city` NOT IN ( {$placeholders} ) )"
+				: "( `city` IS NULL OR `city` IN ( {$placeholders} ) )";
+
+			return array(
+				'sql'    => $sql,
+				'values' => $values,
+			);
+		}
+
+		/**
+		 * The most recent known city for a stored IP, looked up across
+		 * every registered log table.
+		 *
+		 * Cross-table on purpose: an IP resolved by a page view can repair
+		 * an event-tracking row, which is what the combined log shows side
+		 * by side.
+		 *
+		 * @param string $stored_ip IP as written to the log (already filtered).
+		 * @return string City, or '' when nothing is on record.
+		 */
+		public static function known_city_for_ip( $stored_ip ) {
+			global $wpdb;
+
+			$stored_ip = is_string( $stored_ip ) ? trim( $stored_ip ) : '';
+			if ( '' === $stored_ip ) {
+				return '';
+			}
+
+			$known = self::missing_city_clause( true );
+
+			foreach ( self::geo_tables() as $table ) {
+				$args = array_merge( array( $stored_ip ), $known['values'] );
+				$city = $wpdb->get_var( // phpcs:ignore
+					$wpdb->prepare(
+						"SELECT `city` FROM `{$table}` WHERE `user_ip` = %s AND {$known['sql']} ORDER BY `visit_date` DESC LIMIT 1", // phpcs:ignore
+						...$args
+					)
+				);
+				if ( $city ) {
+					return (string) $city;
+				}
+			}
+
+			return '';
+		}
+
+		/**
+		 * Write a city onto every location-less row for one IP.
+		 *
+		 * @param string $stored_ip IP as written to the log (already filtered).
+		 * @param string $city      City to write.
+		 * @param bool   $flush     Invalidate the log cache after writing.
+		 *                          Pass false when batching and flush once.
+		 * @return int Rows updated.
+		 */
+		public static function apply_city_to_ip( $stored_ip, $city, $flush = true ) {
+			global $wpdb;
+
+			$stored_ip = is_string( $stored_ip ) ? trim( $stored_ip ) : '';
+			$city      = is_string( $city ) ? trim( $city ) : '';
+			if ( '' === $stored_ip || '' === $city ) {
+				return 0;
+			}
+
+			$missing = self::missing_city_clause();
+			$row_cap = (int) apply_filters( 'uat_geo_backfill_row_cap', 5000 );
+			$updated = 0;
+
+			foreach ( self::geo_tables() as $table ) {
+				$args     = array_merge( array( $city, $stored_ip ), $missing['values'], array( $row_cap ) );
+				$updated += (int) $wpdb->query( // phpcs:ignore
+					$wpdb->prepare(
+						"UPDATE `{$table}` SET `city` = %s WHERE `user_ip` = %s AND {$missing['sql']} LIMIT %d", // phpcs:ignore
+						...$args
+					)
+				);
+			}
+
+			if ( $flush && $updated > 0 && class_exists( 'Moove_UAT_Cache' ) ) {
+				Moove_UAT_Cache::bump();
+			}
+
+			return $updated;
+		}
+
+		/**
+		 * Replace N/A locations with a city already on record for the same
+		 * IP address.
+		 *
+		 * Geolocation is resolved off the request path, so the row that
+		 * triggers a lookup is always written before the answer arrives.
+		 * Rows written on a cold cache therefore keep N/A while later
+		 * visits from the identical IP show the city. This walks the
+		 * location-less rows and copies across what another row already
+		 * knows — no external API calls, so it is safe to run on demand and
+		 * costs nothing in provider quota.
+		 *
+		 * Bounded per run: it processes a capped number of distinct IPs,
+		 * and the daily job picks up where the traffic left off. Rows whose
+		 * IP has no location anywhere are skipped — only a provider lookup
+		 * can resolve those.
+		 *
+		 * @param int $max_ips Distinct IPs to process. 0 = filtered default.
+		 * @return int Rows repaired.
+		 */
+		public static function repair_missing_locations( $max_ips = 0 ) {
+			global $wpdb;
+
+			$max_ips = $max_ips > 0
+				? (int) $max_ips
+				: (int) apply_filters( 'uat_geo_backfill_ip_batch', 200 );
+
+			$missing  = self::missing_city_clause();
+			$repaired = 0;
+
+			// Collect the work queue across every table first. apply_city_to_ip()
+			// already writes to all of them, so an IP that is location-less in
+			// two tables must still only be handled once.
+			$candidates = array();
+			foreach ( self::geo_tables() as $table ) {
+				$args = array_merge( $missing['values'], array( $max_ips ) );
+				$ips  = $wpdb->get_col( // phpcs:ignore
+					$wpdb->prepare(
+						"SELECT DISTINCT `user_ip` FROM `{$table}` WHERE `user_ip` IS NOT NULL AND `user_ip` <> '' AND {$missing['sql']} LIMIT %d", // phpcs:ignore
+						...$args
+					)
+				);
+
+				if ( ! empty( $ips ) ) {
+					foreach ( $ips as $ip ) {
+						$candidates[ $ip ] = true;
+					}
+				}
+			}
+
+			foreach ( array_keys( $candidates ) as $ip ) {
+				$city = self::known_city_for_ip( $ip );
+				if ( '' === $city ) {
+					// Never resolved anywhere — only a provider lookup can
+					// fill this one in.
+					continue;
+				}
+				$repaired += self::apply_city_to_ip( $ip, $city, false );
+			}
+
+			// One namespace bump for the whole run rather than one per IP —
+			// each bump is an autoloaded option write.
+			if ( $repaired > 0 && class_exists( 'Moove_UAT_Cache' ) ) {
+				Moove_UAT_Cache::bump();
+			}
+
+			return $repaired;
 		}
 	}
 
