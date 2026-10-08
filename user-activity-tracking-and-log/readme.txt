@@ -1,7 +1,7 @@
 === User Activity Tracking and Log ===
 Contributors: MooveAgency
 Donate link: https://www.mooveagency.com/wordpress-plugins/user-activity-tracking-and-log/
-Stable tag: 4.3.2
+Stable tag: 4.3.3
 Tags: time tracking, activity log, analytics, statistics, stats
 Requires at least: 4.3
 Tested up to: 7.1

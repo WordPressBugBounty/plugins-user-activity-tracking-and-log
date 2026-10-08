@@ -28,31 +28,30 @@ if ( ! class_exists( 'Moove_UAT_Updater' ) ) {
 		public $update_data = array();
 
 		/**
-		 * Active plugins
-		 *
-		 * @var array
-		 */
-		public $active_plugins = array();
-
-		/**
 		 * Construct
 		 */
 		public function __construct() {
 			if ( function_exists( 'uat_cookie_compliance_addon_load_libs' ) ) :
+				// Registered on every request, including cron and auto-updates: WordPress rebuilds the
+				// update list from wordpress.org there too, and the add-on has to be part of it.
+				add_filter( 'site_transient_update_plugins', array( &$this, 'set_update_data' ) );
+				add_filter( 'upgrader_package_options', array( &$this, 'refresh_package' ) );
+				add_filter( 'upgrader_source_selection', array( &$this, 'upgrader_source_selection' ), 10, 4 );
+				add_action( 'wp_update_plugins', array( &$this, 'uat_check_for_updates' ) );
+
 				add_action( 'uat_plugin_updater_notice', array( &$this, 'uat_plugin_updater_notice' ) );
 				global $pagenow;
 				$allowed_pages = array( 'update-core.php', 'plugins.php' );
 				$plugin_slug   = false;
 				$lm            = new Moove_UAT_License_Manager();
 				$plugin_slug   = $lm->get_add_on_plugin_slug();
-				if ( in_array( $pagenow, $allowed_pages, true ) ) :
+				// Bypass the throttle only when the user clicks "Check again" on Dashboard > Updates.
+				if ( 'update-core.php' === $pagenow && isset( $_GET['force-check'] ) ) : // phpcs:ignore
 					self::uat_check_for_updates( true );
-				elseif ( ( 'admin.php' === $pagenow && isset( $_GET['page'] ) && 'moove-activity' === sanitize_text_field( wp_unslash( $_GET['page'] ) ) ) )  : // phpcs:ignore
+				elseif ( in_array( $pagenow, $allowed_pages, true ) || ( 'admin.php' === $pagenow && isset( $_GET['page'] ) && 'moove-activity' === sanitize_text_field( wp_unslash( $_GET['page'] ) ) ) )  : // phpcs:ignore
 					self::uat_check_for_updates();
 				endif;
 				add_filter( 'plugins_api', array( &$this, 'plugins_api' ), 10, 3 );
-				add_filter( 'pre_set_site_transient_update_plugins', array( &$this, 'set_update_data' ) );
-				add_filter( 'upgrader_source_selection', array( &$this, 'upgrader_source_selection' ), 10, 4 );
 				if ( $plugin_slug ) :
 					add_action( "in_plugin_update_message-{$plugin_slug}", array( &$this, 'uat_update_message_content' ), 10, 2 );
 				endif;
@@ -101,47 +100,18 @@ if ( ! class_exists( 'Moove_UAT_Updater' ) ) {
 		 */
 		public function uat_check_for_updates( $transient_delete = false ) {
 			$this->update_data = get_option( 'uat_update_data' );
-			$active            = get_option( 'active_plugins' );
 			$last_checked      = get_option( 'uat_last_checked' );
 			if ( $transient_delete ) :
 				$last_checked = strtotime( 'yesterday' );
 			endif;
 			$now               = strtotime( 'now' );
-			$check_interval    = 1;
+			$check_interval    = 12 * HOUR_IN_SECONDS;
 
-			foreach ( $active as $slug ) :
-				$this->active_plugins[ $slug ] = true;
-			endforeach;
-
-			// transient expiration.
+			// The stored data is merged into the update list by set_update_data() on every read.
 			if ( ( $now - $last_checked ) > $check_interval ) :
 				$this->update_data = $this->get_addon_updates();
 				update_option( 'uat_update_data', $this->update_data );
 				update_option( 'uat_last_checked', $now );
-				$plugins     = get_site_transient( 'update_plugins' );
-				$lm          = new Moove_UAT_License_Manager();
-				$plugin_slug = $lm->get_add_on_plugin_slug();
-
-				$uat_default_content = new Moove_Activity_Content();
-				$option_key          = $uat_default_content->moove_uat_get_key_name();
-				$uat_key             = $uat_default_content->uat_get_activation_key( $option_key );
-				$license_key         = isset( $uat_key['key'] ) ? sanitize_text_field( $uat_key['key'] ) : false;
-
-				if ( $plugin_slug ) :
-					if ( $license_key && ! isset( $uat_key['deactivation'] ) ) :
-						if ( isset( $plugins->response[ $plugin_slug ] ) ) :
-							$plugins->response[ $plugin_slug ]->new_version = $this->update_data[ $plugin_slug ]['new_version'];
-							$plugins->response[ $plugin_slug ]->package     = $this->update_data[ $plugin_slug ]['package'];
-							set_site_transient( 'update_plugins', $plugins );
-						endif;
-					else :
-						if ( isset( $plugins->response[ $plugin_slug ] ) ) :
-							$plugins->response[ $plugin_slug ]->new_version = $this->update_data[ $plugin_slug ]['new_version'];
-							$plugins->response[ $plugin_slug ]->package     = '';
-							set_site_transient( 'update_plugins', $plugins );
-						endif;
-					endif;
-				endif;
 			endif;
 		}
 
@@ -157,8 +127,10 @@ if ( ! class_exists( 'Moove_UAT_Updater' ) ) {
 			$uat_key             = $uat_default_content->uat_get_activation_key( $option_key );
 			$license_key         = isset( $uat_key['key'] ) ? sanitize_text_field( $uat_key['key'] ) : false;
 			if ( $license_key ) :
-
-				$plugins = function_exists( 'get_plugins' ) ? get_plugins() : array();
+				if ( ! function_exists( 'get_plugins' ) ) :
+					require_once ABSPATH . 'wp-admin/includes/plugin.php';
+				endif;
+				$plugins = get_plugins();
 				foreach ( $plugins as $slug => $info ) :
 					if ( isset( $info['TextDomain'] ) && 'user-activity-tracking-and-log-addon' === $info['TextDomain'] ) :
 						$license_manager  = new Moove_UAT_License_Manager();
@@ -233,25 +205,60 @@ if ( ! class_exists( 'Moove_UAT_Updater' ) ) {
 		}
 
 		/**
-		 * Plugin transient update
+		 * Merge the add-on into the update list whenever WordPress reads it.
 		 *
-		 * @param object $transient Transient.
+		 * WordPress rebuilds the list from wordpress.org (cron, admin pages) without the add-on,
+		 * so it is added back on read from the stored update data.
+		 *
+		 * @param object $transient Update plugins transient.
 		 */
 		public function set_update_data( $transient ) {
-			if ( empty( $transient->checked ) ) {
+			$update_data = get_option( 'uat_update_data' );
+			if ( ! is_object( $transient ) || ! is_array( $update_data ) ) {
 				return $transient;
 			}
-			foreach ( $this->update_data as $plugin => $info ) {
-				if ( isset( $this->active_plugins[ $plugin ] ) ) {
-					$plugin_data = get_plugin_data( WP_PLUGIN_DIR . '/' . $plugin );
-					$version     = $plugin_data['Version'];
+			foreach ( $update_data as $plugin => $info ) {
+				if ( ! file_exists( WP_PLUGIN_DIR . '/' . $plugin ) ) {
+					continue;
+				}
+				if ( ! function_exists( 'get_plugin_data' ) ) {
+					require_once ABSPATH . 'wp-admin/includes/plugin.php';
+				}
+				$plugin_data = get_plugin_data( WP_PLUGIN_DIR . '/' . $plugin, false, false );
 
-					if ( version_compare( $version, $info['new_version'], '<' ) ) {
-						$transient->response[ $plugin ] = (object) $info;
-					}
+				if ( ! empty( $info['new_version'] ) && version_compare( $plugin_data['Version'], $info['new_version'], '<' ) ) {
+					$transient->response[ $plugin ] = (object) $info;
+				} else {
+					unset( $transient->response[ $plugin ] );
 				}
 			}
 			return $transient;
+		}
+
+		/**
+		 * Swap in a fresh download link right before the add-on is updated.
+		 *
+		 * The link in the stored update data is a short-lived token, so it may have expired.
+		 *
+		 * @param array $options Upgrader package options.
+		 */
+		public function refresh_package( $options ) {
+			$plugin      = isset( $options['hook_extra']['plugin'] ) ? $options['hook_extra']['plugin'] : false;
+			$update_data = get_option( 'uat_update_data' );
+			if ( ! $plugin || ! is_array( $update_data ) || ! isset( $update_data[ $plugin ] ) ) {
+				return $options;
+			}
+			$uat_default_content = new Moove_Activity_Content();
+			$uat_key             = $uat_default_content->uat_get_activation_key( $uat_default_content->moove_uat_get_key_name() );
+			if ( empty( $uat_key['key'] ) || isset( $uat_key['deactivation'] ) ) {
+				return $options;
+			}
+			$license_manager = new Moove_UAT_License_Manager();
+			$response        = $license_manager->validate_license( sanitize_text_field( $uat_key['key'] ), 'uat', 'update' );
+			if ( ! empty( $response['valid'] ) && ! empty( $response['data']['download_token'] ) ) {
+				$options['package'] = $response['data']['download_token'];
+			}
+			return $options;
 		}
 
 		/**
@@ -264,8 +271,9 @@ if ( ! class_exists( 'Moove_UAT_Updater' ) ) {
 		 */
 		public function upgrader_source_selection( $source, $remote_source, $upgrader, $hook_extra = null ) {
 			global $wp_filesystem;
-			$plugin = isset( $hook_extra['plugin'] ) ? $hook_extra['plugin'] : false;
-			if ( isset( $this->update_data[ $plugin ] ) && $plugin ) :
+			$plugin      = isset( $hook_extra['plugin'] ) ? $hook_extra['plugin'] : false;
+			$update_data = get_option( 'uat_update_data' );
+			if ( $plugin && is_array( $update_data ) && isset( $update_data[ $plugin ] ) ) :
 				$lm          = new Moove_UAT_License_Manager();
 				$plugin_slug = $lm->get_add_on_plugin_slug();
 				$temp_slug   = basename( trailingslashit( $source ) );

@@ -83,7 +83,8 @@ class Moove_UAT_License_Manager {
 	public function get_add_on_plugin_slug() {
 		$slug = false;
 		if ( function_exists( 'moove_uat_addon_get_plugin_dir' ) ) :
-			$slug = str_replace( WP_PLUGIN_URL . '/', '', moove_uat_addon_get_plugin_dir() ) . '/moove-activity-addon.php';
+			// Folder name only: plugins_url() and WP_PLUGIN_URL can differ in scheme (cron, proxies), so stripping the URL prefix is unreliable.
+			$slug = basename( untrailingslashit( moove_uat_addon_get_plugin_dir() ) ) . '/moove-activity-addon.php';
 		else :
 			if ( ! function_exists( 'get_plugins' ) ) :
 				require_once ABSPATH . 'wp-admin/includes/plugin.php';

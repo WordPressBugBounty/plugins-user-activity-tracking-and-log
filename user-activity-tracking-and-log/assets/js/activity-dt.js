@@ -16163,7 +16163,7 @@ $.extend( Buttons.prototype, {
 
 			if ( conf.key === character ) {
 				e._buttonsHandled = true;
-				$(node).click();
+				$(node).trigger('click');
 			}
 			else if ( $.isPlainObject( conf.key ) ) {
 				if ( conf.key.key !== character ) {
@@ -16188,7 +16188,7 @@ $.extend( Buttons.prototype, {
 
 				// Made it this far - it is good
 				e._buttonsHandled = true;
-				$(node).click();
+				$(node).trigger('click');
 			}
 		};
 
@@ -18207,7 +18207,7 @@ $.extend( Responsive.prototype, {
 
 		$( dt.table().body() ).on( 'keyup.dtr', 'td, th', function (e) {
 			if ( e.keyCode === 13 && $(this).data('dtr-keyboard') ) {
-				$(this).click();
+				$(this).trigger('click');
 			}
 		} );
 
@@ -20809,7 +20809,7 @@ return DataTable.Buttons;
 			nPaging.appendChild(nNext);
 			nPaging.appendChild(nLast);
 
-			$(nFirst).click(function() {
+			$(nFirst).on('click', function() {
 				var iCurrentPage = calcCurrentPage(oSettings);
 				if (iCurrentPage !== 1) {
 					oSettings.oApi._fnPageChange(oSettings, 'first');
@@ -20817,7 +20817,7 @@ return DataTable.Buttons;
 				}
 			});
 
-			$(nPrevious).click(function() {
+			$(nPrevious).on('click', function() {
 				var iCurrentPage = calcCurrentPage(oSettings);
 				if (iCurrentPage !== 1) {
 					oSettings.oApi._fnPageChange(oSettings, 'previous');
@@ -20825,7 +20825,7 @@ return DataTable.Buttons;
 				}
 			});
 
-			$(nNext).click(function() {
+			$(nNext).on('click', function() {
 				var iCurrentPage = calcCurrentPage(oSettings);
 				if (iCurrentPage !== calcPages(oSettings)) {
 					oSettings.oApi._fnPageChange(oSettings, 'next');
@@ -20833,7 +20833,7 @@ return DataTable.Buttons;
 				}
 			});
 
-			$(nLast).click(function() {
+			$(nLast).on('click', function() {
 				var iCurrentPage = calcCurrentPage(oSettings);
 				if (iCurrentPage !== calcPages(oSettings)) {
 					oSettings.oApi._fnPageChange(oSettings, 'last');
@@ -20841,7 +20841,7 @@ return DataTable.Buttons;
 				}
 			});
 
-			$(nPaging).find('.' + paginateInputClassName).keyup(function (e) {
+			$(nPaging).find('.' + paginateInputClassName).on('keyup', function (e) {
 
 		    
 
@@ -20876,8 +20876,8 @@ return DataTable.Buttons;
 			});
 
 			// Take the brutal approach to cancelling text selection.
-			$('span', nPaging).bind('mousedown', function () { return false; });
-			$('span', nPaging).bind('selectstart', function() { return false; });
+			$('span', nPaging).on('mousedown', function () { return false; });
+			$('span', nPaging).on('selectstart', function() { return false; });
 
 			// If we can't page anyway, might as well not show it.
 			var iPages = calcPages(oSettings);
